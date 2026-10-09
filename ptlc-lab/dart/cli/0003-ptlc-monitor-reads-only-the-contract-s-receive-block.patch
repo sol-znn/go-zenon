@@ -1,0 +1,63 @@
+From b0a232c1bd56ca8d29c2fca427296593a227ea1b Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Fri, 9 Oct 2026 11:28:51 -0400
+Subject: [PATCH] ptlc: monitor reads only the contract's receive blocks; no
+ decoding of empty data
+
+The contract's chain holds its own sends too, the payouts, and once one is
+received its paired block is the receiver's, with no data. The SDK's
+extractSignature takes four bytes and throws on fewer, so the monitor fell over
+on the first received payout in its range. It now looks at contract receive
+blocks only, and the decoder refuses data shorter than a method id, which also
+covers ptlc.inspect on a plain send.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/ptlc.dart | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/lib/ptlc.dart b/lib/ptlc.dart
+index 056265c..8c8e3ea 100644
+--- a/lib/ptlc.dart
++++ b/lib/ptlc.dart
+@@ -209,7 +209,11 @@ String? _tooLateToReveal(PtlcInfo ptlc, int now) {
+ bool _accepted(List<int>? data) =>
+     data != null && data.length == 8 && Secp256k1.bytesToBigInt(data) == BigInt.one;
+ 
++/// The ptlc method a block's data calls, or null. Data shorter than a method id
++/// is no call: a plain send to the contract, or a receive block, carries none,
++/// and the SDK's extractSignature would throw on it.
+ AbiFunction? _ptlcFunction(List<int> data) {
++  if (data.length < 4) return null;
+   for (var entry in Definitions.ptlc.entries) {
+     if (const ListEquality().equals(
+         AbiFunction.extractSignature(entry.encodeSignature()),
+@@ -585,14 +589,7 @@ Future<void> _inspect() async {
+     return;
+   }
+ 
+-  Function eq = const ListEquality().equals;
+-  AbiFunction? f;
+-  for (var entry in Definitions.ptlc.entries) {
+-    if (eq(AbiFunction.extractSignature(entry.encodeSignature()),
+-        AbiFunction.extractSignature(block.data))) {
+-      f = AbiFunction(entry.name!, entry.inputs!);
+-    }
+-  }
++  final f = _ptlcFunction(block.data);
+   if (f == null) {
+     print('The account block contains invalid data');
+     return;
+@@ -652,6 +649,9 @@ Future<void> _monitor() async {
+     for (var h = lastHeight + 1; h <= head; h++) {
+       final blocks = await znnClient.ledger.getAccountBlocksByHeight(ptlcAddress, h, 1);
+       for (final b in blocks.list ?? []) {
++        // The contract's chain also holds its own sends, the payouts; once
++        // received, their paired block is the receiver's, with no data.
++        if (b.blockType != BlockTypeEnum.contractReceive.index) continue;
+         final paired = b.pairedAccountBlock;
+         if (paired == null) continue;
+         final f = _ptlcFunction(paired.data);
+-- 
+2.53.0.windows.2
+

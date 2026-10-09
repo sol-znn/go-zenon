@@ -1,0 +1,313 @@
+15:50:06 harness C:\Users\user\AppData\Local\Temp\claude\C--dev-zenon\c4fe668e-07bc-4984-b16a-a5e7ff651990\scratchpad\syrius-040\utils\dev-harness.js
+15:50:09 Extension hlbbbombiomfhinfmankdhmhpfppdkpk loaded, popup at chrome-extension://hlbbbombiomfhinfmankdhmhpfppdkpk/popup.html / Wallet unlocked.
+15:50:11 Opened http://127.0.0.1:8471/#/wallet / Provider injected (version 2): request, connect, disconnect, getAccounts, getChainId, getNodeUrl, isConnected, sendTransaction, sendAccountBlock, signMessage, on, removeListener
+15:50:11   ok   the provider is injected into the lab page
+15:50:13 connect
+15:50:13   ok   before connecting, the page is told nothing: The extension is in this browser / Not connected
+15:50:15     connect from http://127.0.0.1:8471 (request b4c14409-83e3-466c-b840-284e791062f2)
+15:50:15       | 127.0.0.1:8471
+15:50:15       | PTLC lab
+15:50:15       | devnet · Account 8
+15:50:15       | 
+15:50:15       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:50:15       | 
+15:50:15       | This request expires at 12:20:13 PM.
+15:50:15       | 
+15:50:15       | Connect this wallet?
+15:50:15       | 
+15:50:15       | 127.0.0.1:8471 will be able to see your address, the chain you are signing for and your node host. Private endpoint details stay in your wallet. It cannot move anything without asking again.
+15:50:15       | 
+15:50:15       | Address
+15:50:15       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:50:15       | Chain
+15:50:15       | 69
+15:50:15       | Node host
+15:50:15       | ws://127.0.0.1:8471
+15:50:15       | Cancel
+15:50:15       | Connect
+15:50:15     Pressed Connect.
+15:50:15     The wallet has answered request b4c14409-83e3-466c-b840-284e791062f2.
+15:50:15     [ok] The extension is in this browser
+15:50:15     [ok] Connected to this page
+15:50:15     [ok] Signing for chain 69
+15:50:15     [ok] Its node is the lab's chain
+15:50:15     [ok] It holds something to lock
+15:50:15     [ok] It has plasma
+15:50:15   ok   connected
+15:50:15   ok   signing for chain 69
+15:50:15   ok   its node is shown to be the lab's chain
+15:50:15 provider protocol 2, release 0.4.0
+15:50:15 fund the wallet account from Alice, and fuse plasma for it
+15:50:15   ok   the Syrius account has its own row: {"znn":"100","qsr":"1000","plasma":"420,000","waiting":"0"}
+15:50:15   ok   the wallet account is funded and fused: {"znn":"100","qsr":"1000","plasma":"420,000","waiting":"0"}
+15:50:17 Create through Syrius, declined in the wallet
+15:50:20     signAndSendBlock from http://127.0.0.1:8471 (request 907ee13a-8899-4de0-aac3-395e2bf28312)
+15:50:20       | 127.0.0.1:8471
+15:50:20       | PTLC lab
+15:50:20       | devnet · Account 8
+15:50:20       | 
+15:50:20       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:50:20       | 
+15:50:20       | This request expires at 12:20:19 PM.
+15:50:20       | 
+15:50:20       | Sign this block?
+15:50:20       | 
+15:50:20       | Preparing this block for review…
+15:50:20       | 
+15:50:20       | Reject
+15:50:20       | Sign and send
+15:50:20     Pressed reject.
+15:50:20     The wallet has answered request 907ee13a-8899-4de0-aac3-395e2bf28312.
+15:50:21   ok   a declined approval is reported as declined, and nothing is sent: Lock 1 ZNN to a secp256k1 point | Syrius | In Syrius | Published | In a momentum | Accepted | declined in Syrius
+15:50:21 Create through Syrius: 1 ZNN to a point, payable to Bob, 3 minutes
+15:50:53     signAndSendBlock from http://127.0.0.1:8471 (request 3d958257-d226-470c-aa71-f1babc90ae64)
+15:50:53       | 127.0.0.1:8471
+15:50:53       | PTLC lab
+15:50:53       | devnet · Account 8
+15:50:53       | 
+15:50:53       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:50:53       | 
+15:50:53       | This request expires at 12:20:51 PM.
+15:50:53       | 
+15:50:53       | Sign this block?
+15:50:53       | 
+15:50:53       | This wallet cannot fully interpret this call or its data. Verify the complete raw data before approving.
+15:50:53       | 
+15:50:53       | Contract
+15:50:53       | unrecognized
+15:50:53       | Destination
+15:50:53       | z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady
+15:50:53       | Amount
+15:50:53       | 1.0 ZNN
+15:50:53       | Token
+15:50:53       | zts1znnxxxxxxxxxxxxx9z4ulx
+15:50:53       | Base units
+15:50:53       | 100000000
+15:50:53       | Raw transaction data
+15:50:53       | Reject
+15:50:53       | Sign and send
+15:50:53     Pressed Sign and send.
+15:50:53     Wallet says: Block sent
+15:50:53     The wallet has answered request 3d958257-d226-470c-aa71-f1babc90ae64.
+15:50:53   ok   Syrius showed the call as one it cannot interpret
+15:50:53   ok   Syrius named the contract as unrecognized
+15:51:16   ok   the contract accepted the Create: Lock 1 ZNN to a secp256k1 point | Syrius | In Syrius | Published | In a momentum | Accepted | block  | 6ce04de409…1babfd93 | copy | included in momentum 2,997; the contract answered 1 momentum later, 10 s by the chain's clock
+15:51:16 ProxyUnlock through Syrius: the wallet submits, Bob is paid
+15:51:22     signAndSendBlock from http://127.0.0.1:8471 (request 16722f38-e0bd-4aa3-8a95-eee53bad24e4)
+15:51:22       | 127.0.0.1:8471
+15:51:22       | PTLC lab
+15:51:22       | devnet · Account 8
+15:51:22       | 
+15:51:22       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:51:22       | 
+15:51:22       | This request expires at 12:21:18 PM.
+15:51:22       | 
+15:51:22       | Sign this block?
+15:51:22       | 
+15:51:22       | This wallet cannot fully interpret this call or its data. Verify the complete raw data before approving.
+15:51:22       | 
+15:51:22       | Contract
+15:51:22       | unrecognized
+15:51:22       | Destination
+15:51:22       | z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady
+15:51:22       | Raw transaction data
+15:51:22       | Reject
+15:51:22       | Sign and send
+15:51:22     Pressed Sign and send.
+15:51:22     Wallet says: Block sent
+15:51:22     The wallet has answered request 16722f38-e0bd-4aa3-8a95-eee53bad24e4.
+15:51:42   ok   the contract accepted the ProxyUnlock: Proxy unlock 6ce04de4…fd93 for Bob | Syrius | In Syrius | Published | In a momentum | Accepted | block  | 4dfe90b5cb…795d2dc0 | copy | included in momentum 3,000; the contract answered 1 momentum later, 10 s by the chain's clock
+15:51:42 Alice locks 1 ZNN payable to the wallet account; Syrius unlocks it
+15:52:51   ok   the contract accepted Alice's Create: Lock 1 ZNN to a secp256k1 point | Alice | Signing | Published | In a momentum | Accepted | block  | bf3438047b…71901ef1 | copy | included in momentum 3,002; the contract answered 1 momentum later, 10 s by the chain's clock
+15:52:54     signAndSendBlock from http://127.0.0.1:8471 (request 1481ecc4-eb99-4007-b79e-ef498921713d)
+15:52:54       | 127.0.0.1:8471
+15:52:54       | PTLC lab
+15:52:54       | devnet · Account 8
+15:52:54       | 
+15:52:54       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:52:54       | 
+15:52:54       | This request expires at 12:22:53 PM.
+15:52:54       | 
+15:52:54       | Sign this block?
+15:52:54       | 
+15:52:54       | This wallet cannot fully interpret this call or its data. Verify the complete raw data before approving.
+15:52:54       | 
+15:52:54       | Contract
+15:52:54       | unrecognized
+15:52:54       | Destination
+15:52:54       | z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady
+15:52:54       | Raw transaction data
+15:52:54       | Reject
+15:52:54       | Sign and send
+15:52:54     Pressed Sign and send.
+15:52:54     Wallet says: Block sent
+15:52:54     The wallet has answered request 1481ecc4-eb99-4007-b79e-ef498921713d.
+15:53:51   ok   the contract accepted the Unlock: Unlock entry bf343804…1ef1 | Syrius | In Syrius | Published | In a momentum | Accepted | block  | 1fc83d1cf3…04794473 | copy | included in momentum 3,007; the contract answered 1 momentum later, 10 s by the chain's clock
+15:53:51 Create through Syrius with a 2-minute expiry, to reclaim
+15:53:56     signAndSendBlock from http://127.0.0.1:8471 (request 1dc282c9-7421-4a11-a41d-a7929be4b2a7)
+15:53:56       | 127.0.0.1:8471
+15:53:56       | PTLC lab
+15:53:56       | devnet · Account 8
+15:53:56       | 
+15:53:56       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:53:56       | 
+15:53:56       | This request expires at 12:23:54 PM.
+15:53:56       | 
+15:53:56       | Sign this block?
+15:53:56       | 
+15:53:56       | This wallet cannot fully interpret this call or its data. Verify the complete raw data before approving.
+15:53:56       | 
+15:53:56       | Contract
+15:53:56       | unrecognized
+15:53:56       | Destination
+15:53:56       | z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady
+15:53:56       | Amount
+15:53:56       | 1.0 ZNN
+15:53:56       | Token
+15:53:56       | zts1znnxxxxxxxxxxxxx9z4ulx
+15:53:56       | Base units
+15:53:56       | 100000000
+15:53:56       | Raw transaction data
+15:53:56       | Reject
+15:53:56       | Sign and send
+15:53:56     Pressed Sign and send.
+15:53:56     Wallet says: Block sent
+15:53:56     The wallet has answered request 1dc282c9-7421-4a11-a41d-a7929be4b2a7.
+15:54:49   ok   the contract accepted the Create: Lock 1 ZNN to a secp256k1 point | Syrius | In Syrius | Published | In a momentum | Accepted | block  | 14bd6a1680…9388495e | copy | included in momentum 3,012; the contract answered 1 momentum later, 10 s by the chain's clock
+15:54:59     signAndSendBlock from http://127.0.0.1:8471 (request bc75a267-41c3-4815-90e1-26b9df828ab0)
+15:54:59       | 127.0.0.1:8471
+15:54:59       | PTLC lab
+15:54:59       | devnet · Account 8
+15:54:59       | 
+15:54:59       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:54:59       | 
+15:54:59       | This request expires at 12:24:56 PM.
+15:54:59       | 
+15:54:59       | Sign this block?
+15:54:59       | 
+15:54:59       | This wallet cannot fully interpret this call or its data. Verify the complete raw data before approving.
+15:54:59       | 
+15:54:59       | Contract
+15:54:59       | unrecognized
+15:54:59       | Destination
+15:54:59       | z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady
+15:54:59       | Raw transaction data
+15:54:59       | Reject
+15:54:59       | Sign and send
+15:54:59     Pressed Sign and send.
+15:54:59     Wallet says: Block sent
+15:54:59     The wallet has answered request bc75a267-41c3-4815-90e1-26b9df828ab0.
+15:55:50   ok   a reclaim before the expiry is refused by the contract, not by the wallet: Reclaim entry 14bd6a16…495e | Syrius | In Syrius | Published | In a momentum | Refused | block  | 0e7493ca91…69d5a4e0 | copy | refused: the entry was not expired (40 s to go at that momentum) | included in momentum 3,017; the contract answered 1 momentum later, 10 s by the chain's clock
+15:55:50 waiting for the expiry
+15:56:50     signAndSendBlock from http://127.0.0.1:8471 (request e5ab6640-a264-4d9f-b9ba-21517e714400)
+15:56:50       | 127.0.0.1:8471
+15:56:50       | PTLC lab
+15:56:50       | devnet · Account 8
+15:56:50       | 
+15:56:50       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:56:50       | 
+15:56:50       | This request expires at 12:26:48 PM.
+15:56:50       | 
+15:56:50       | Sign this block?
+15:56:50       | 
+15:56:50       | This wallet cannot fully interpret this call or its data. Verify the complete raw data before approving.
+15:56:50       | 
+15:56:50       | Contract
+15:56:50       | unrecognized
+15:56:50       | Destination
+15:56:50       | z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady
+15:56:50       | Raw transaction data
+15:56:50       | Reject
+15:56:50       | Sign and send
+15:56:50     Pressed Sign and send.
+15:56:50     Wallet says: Block sent
+15:56:50     The wallet has answered request e5ab6640-a264-4d9f-b9ba-21517e714400.
+15:57:50   ok   the contract accepted the Reclaim after the expiry: Reclaim entry 14bd6a16…495e | Syrius | In Syrius | Published | In a momentum | Accepted | block  | 0518e58f2c…14a84733 | copy | included in momentum 3,026; the contract answered 1 momentum later, 10 s by the chain's clock
+15:57:50 signMessage: a text that is not 32 bytes
+15:57:53     signMessage from http://127.0.0.1:8471 (request 62845f2c-515e-4213-99e1-a3747480fca0)
+15:57:53       | 127.0.0.1:8471
+15:57:53       | PTLC lab
+15:57:53       | devnet · Account 8
+15:57:53       | 
+15:57:53       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:57:53       | 
+15:57:53       | This request expires at 12:27:51 PM.
+15:57:53       | 
+15:57:53       | Sign this message?
+15:57:53       | 
+15:57:53       | A signature proves this address is yours. It moves nothing, costs no plasma and is never published — but only sign what you can read, and only for a site you meant to sign in to.
+15:57:53       | 
+15:57:53       | ptlc lab unlock digest 584e82c444226d7a3c030a587773bd337022a6ce3af0937928449d0c9213ffde
+15:57:53       | Signing as
+15:57:53       | z1qq8gll9e…e6kwes
+15:57:53       | Reject
+15:57:53       | Sign
+15:57:53     Pressed Sign.
+15:57:53     Wallet says: Message signed
+15:57:53     The wallet has answered request 62845f2c-515e-4213-99e1-a3747480fca0.
+15:57:53   ok   Syrius signs an ordinary message: signed by z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes | public key f9aeae79f1925b0a46addcdc668b10e633ea812b5d2dfe67d8a0b9a7
+15:57:53 signMessage: exactly 32 bytes, with Sign pressed
+15:57:54     harness approve failed:
+15:57:54     signMessage from http://127.0.0.1:8471 (request cb980a73-0af1-4932-9b5c-a37188335fcb)
+15:57:54       | 127.0.0.1:8471
+15:57:54       | PTLC lab
+15:57:54       | devnet · Account 8
+15:57:54       | 
+15:57:54       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:57:54       | 
+15:57:54       | This request expires at 12:27:53 PM.
+15:57:54       | 
+15:57:54       | Sign this message?
+15:57:54       | 
+15:57:54       | A signature proves this address is yours. It moves nothing, costs no plasma and is never published — but only sign what you can read, and only for a site you meant to sign in to.
+15:57:54       | 
+15:57:54       | ptlc lab: a 32-byte message here
+15:57:54       | Signing as
+15:57:54       | z1qq8gll9e…e6kwes
+15:57:54       | Reject
+15:57:54       | Sign
+15:57:54     Pressed Sign.
+15:57:54     Wallet says: Message signed
+15:57:54     Wallet error: This message is exactly 32 bytes long, the size of an account block hash, so signing it could produce a valid transaction signature. Add or remove a character.
+15:57:54     approve failed: The wallet reported a failure for request cb980a73-0af1-4932-9b5c-a37188335fcb: This message is exactly 32 bytes long, the size of an account block hash, so signing it could produce a valid transaction signature. Add or remove a character.
+15:57:54   ok   with Sign pressed, the wallet itself refuses 32 bytes: Wallet says: Message signed Wallet error: This message is exactly 32 bytes long, the size of an account block hash, so signing it could produce a valid transaction signature. Add or remove a character. approve failed: Th
+15:58:05   ok   the page is given no signature for a 32-byte message: This message is exactly 32 bytes long, the size of an account block hash, so signing it could produce a valid transactio
+15:58:05 disconnect
+15:58:05   ok   after disconnecting, the page is told nothing
+15:58:05 a wallet on wss://devnet.zenon.foo/zenon, which is not the lab's chain
+15:58:16     connect from http://127.0.0.1:8471 (request dc39da54-88fa-43a0-9391-5915f01cb404)
+15:58:16       | 127.0.0.1:8471
+15:58:16       | PTLC lab
+15:58:16       | devnet · Account 8
+15:58:16       | 
+15:58:16       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:58:16       | 
+15:58:16       | This request expires at 12:28:13 PM.
+15:58:16       | 
+15:58:16       | Connect this wallet?
+15:58:16       | 
+15:58:16       | 127.0.0.1:8471 will be able to see your address, the chain you are signing for and your node host. Private endpoint details stay in your wallet. It cannot move anything without asking again.
+15:58:16       | 
+15:58:16       | Address
+15:58:16       | z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes
+15:58:16       | Chain
+15:58:16       | 69
+15:58:16       | Node host
+15:58:16       | wss://devnet.zenon.foo
+15:58:16       | Cancel
+15:58:16       | Connect
+15:58:16     Pressed Connect.
+15:58:16     The wallet has answered request dc39da54-88fa-43a0-9391-5915f01cb404.
+15:58:16     [ok] The extension is in this browser
+15:58:16     [ok] Connected to this page
+15:58:16     [ok] Signing for chain 69
+15:58:16     [no] Its node could not be compared with the lab's
+15:58:16     [ok] It holds something to lock
+15:58:16     [ok] It has plasma
+15:58:16     [unknown] 2 blocks waiting to be received
+15:58:16   ok   the chain id matches and proves nothing
+15:58:16   ok   the node is not accepted as the lab's chain
+15:58:18   ok   the lab will not send a block through that wallet: disabled: Lock the funds
+
+All checks passed against the extension in C:/Users/user/AppData/Local/Temp/claude/C--dev-zenon/c4fe668e-07bc-4984-b16a-a5e7ff651990/scratchpad/syrius-040
+exit 0

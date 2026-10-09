@@ -1,0 +1,599 @@
+From 84926b9ef0b927ac174b7ae4de723b7db9d933d2 Mon Sep 17 00:00:00 2001
+From: 0x3639 <0x3639@protonmail.com>
+Date: Wed, 27 May 2026 04:57:34 -0500
+Subject: [PATCH 02/12] Address PTLC audit follow-ups
+
+(cherry picked from commit 6045b4f7240539eee2e54993f88ce8a6ebd1e027)
+(cherry picked from commit a7068607f882b7f4e13083ec457a10950c52fe74)
+---
+ docs/ptlc/README.md                     |   4 +
+ docs/ptlc/SECURITY.md                   |   4 +-
+ docs/ptlc/SIGNING.md                    |   6 +-
+ vm/embedded/definition/ptlc.go          |   3 +-
+ vm/embedded/implementation/ptlc.go      |   6 +-
+ vm/embedded/implementation/ptlc_test.go | 105 +++++++++++++++++++++-
+ vm/embedded/tests/ptlc_test.go          | 112 ++++++++++++++++++------
+ 7 files changed, 201 insertions(+), 39 deletions(-)
+
+diff --git a/docs/ptlc/README.md b/docs/ptlc/README.md
+index ca37768..dec48d8 100644
+--- a/docs/ptlc/README.md
++++ b/docs/ptlc/README.md
+@@ -42,6 +42,10 @@ PointTypeBIP340
+ 
+ `ProxyUnlock` accepts an explicit destination. Any caller can submit a valid `ProxyUnlock` proof, but the funds still go to the destination covered by the signature. This makes `ProxyUnlock` a bearer-proof flow: possession of a valid signature for `id` and `destination` is enough to submit the unlock transaction.
+ 
++## HTLC comparison
++
++HTLC unlocks prove knowledge of a preimage for a stored hash digest. PTLC unlocks prove possession of a valid signature for a stored public key/point lock. In this implementation, the signature is an ordinary ED25519 or BIP340 signature over the PTLC unlock message; adaptor-signature scalar revelation is not enforced by the embedded contract.
++
+ ## Spork
+ 
+ The PTLC contract is available only after `types.PtlcSpork` is enforced. The PTLC contract map includes the prior HTLC contract map, so existing embedded contracts remain available after PTLC activation.
+diff --git a/docs/ptlc/SECURITY.md b/docs/ptlc/SECURITY.md
+index 527e472..bc6d472 100644
+--- a/docs/ptlc/SECURITY.md
++++ b/docs/ptlc/SECURITY.md
+@@ -4,9 +4,9 @@ This contract moves funds based on stored consensus state and signature verifica
+ 
+ ## Domain separation
+ 
+-Unlock signatures are domain-separated with a purpose/version string, contract address, point type, PTLC id, and destination.
++Unlock signatures are domain-separated with a purpose/version string, chain identifier, contract address, point type, PTLC id, and destination.
+ 
+-This prevents a signature intended for one PTLC context from accidentally verifying in another contract or for another point type. The destination is signed so `ProxyUnlock` cannot redirect funds.
++This prevents a signature intended for one PTLC context from accidentally verifying on another Zenon chain, in another contract, or for another point type. The destination is signed so `ProxyUnlock` cannot redirect funds.
+ 
+ ## Stored state validation
+ 
+diff --git a/docs/ptlc/SIGNING.md b/docs/ptlc/SIGNING.md
+index 5997728..d37faa2 100644
+--- a/docs/ptlc/SIGNING.md
++++ b/docs/ptlc/SIGNING.md
+@@ -9,6 +9,7 @@ The message is:
+ ```go
+ crypto.Hash(common.JoinBytes(
+     []byte("zenon-ptlc-unlock:v1"),
++    common.Uint64ToBytes(chainIdentifier),
+     types.PtlcContract.Bytes(),
+     []byte{pointType},
+     id.Bytes(),
+@@ -19,12 +20,13 @@ crypto.Hash(common.JoinBytes(
+ Fields:
+ 
+ - `zenon-ptlc-unlock:v1`: purpose and version string.
++- `chainIdentifier`: Zenon chain identifier from the frontier momentum.
+ - `types.PtlcContract`: embedded contract address.
+ - `pointType`: stored signature scheme.
+ - `id`: hash of the PTLC create block.
+ - `destination`: address that receives funds if the signature verifies.
+ 
+-If a consensus-visible network or chain id is added later, introduce a new signing version and bind that id in the message.
++The chain identifier is consensus state, not a wallet preference. A signature produced for another Zenon chain id is invalid on this chain.
+ 
+ ## ED25519 mode
+ 
+@@ -43,7 +45,7 @@ Malformed BIP340 signatures are rejected with `ErrInvalidPointSignature`. Malfor
+ For `ProxyUnlock`, the caller and destination can differ. The signature must still be valid for the destination argument:
+ 
+ ```txt
+-signature = Sign(pointLockPrivateKey, PTLCUnlockMessage(pointType, id, destination))
++signature = Sign(pointLockPrivateKey, PTLCUnlockMessage(chainIdentifier, pointType, id, destination))
+ ```
+ 
+ A valid signature for destination A cannot unlock funds to destination B.
+diff --git a/vm/embedded/definition/ptlc.go b/vm/embedded/definition/ptlc.go
+index cdae224..1409a73 100644
+--- a/vm/embedded/definition/ptlc.go
++++ b/vm/embedded/definition/ptlc.go
+@@ -147,9 +147,10 @@ func unmarshalPtlcInfoKey(key []byte) (*types.Hash, error) {
+ 	return h, nil
+ }
+ 
+-func GetPtlcUnlockMessage(pointType uint8, id types.Hash, destination types.Address) []byte {
++func GetPtlcUnlockMessage(chainIdentifier uint64, pointType uint8, id types.Hash, destination types.Address) []byte {
+ 	return crypto.Hash(common.JoinBytes(
+ 		[]byte(PtlcUnlockMessageDomain),
++		common.Uint64ToBytes(chainIdentifier),
+ 		types.PtlcContract.Bytes(),
+ 		[]byte{pointType},
+ 		id.Bytes(),
+diff --git a/vm/embedded/implementation/ptlc.go b/vm/embedded/implementation/ptlc.go
+index 6f0c572..71b3222 100644
+--- a/vm/embedded/implementation/ptlc.go
++++ b/vm/embedded/implementation/ptlc.go
+@@ -55,7 +55,7 @@ func checkStoredPtlcInfo(ptlcInfo *definition.PtlcInfo) error {
+ 	return nil
+ }
+ 
+-func verifyPtlcSignature(ptlcInfo *definition.PtlcInfo, id types.Hash, destination types.Address, signature []byte) error {
++func verifyPtlcSignature(ptlcInfo *definition.PtlcInfo, chainIdentifier uint64, id types.Hash, destination types.Address, signature []byte) error {
+ 	signatureSize, ok := definition.PointTypeSignatureSizes[ptlcInfo.PointType]
+ 	if !ok {
+ 		return constants.ErrInvalidPointType
+@@ -66,7 +66,7 @@ func verifyPtlcSignature(ptlcInfo *definition.PtlcInfo, id types.Hash, destinati
+ 		return constants.ErrInvalidPointSignature
+ 	}
+ 
+-	unlockMessage := definition.GetPtlcUnlockMessage(ptlcInfo.PointType, id, destination)
++	unlockMessage := definition.GetPtlcUnlockMessage(chainIdentifier, ptlcInfo.PointType, id, destination)
+ 	if ptlcInfo.PointType == definition.PointTypeED25519 {
+ 		valid, err := wallet.VerifySignature(ed25519.PublicKey(ptlcInfo.PointLock), unlockMessage, signature)
+ 		if err != nil {
+@@ -260,7 +260,7 @@ func unlockPtlc(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock
+ 		return nil, constants.ErrExpired
+ 	}
+ 
+-	if err := verifyPtlcSignature(ptlcInfo, id, destination, signature); err != nil {
++	if err := verifyPtlcSignature(ptlcInfo, momentum.ChainIdentifier, id, destination, signature); err != nil {
+ 		ptlcLog.Debug("invalid unlock - invalid signature", "id", ptlcInfo.Id, "address", sendBlock.Address, "destination", destination, "signature", base64.StdEncoding.EncodeToString(signature), "reason", err)
+ 		return nil, err
+ 	}
+diff --git a/vm/embedded/implementation/ptlc_test.go b/vm/embedded/implementation/ptlc_test.go
+index b3d285c..c22d12b 100644
+--- a/vm/embedded/implementation/ptlc_test.go
++++ b/vm/embedded/implementation/ptlc_test.go
+@@ -4,13 +4,19 @@ import (
+ 	"bytes"
+ 	"math/big"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/btcsuite/btcd/btcec/v2"
+ 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+ 	"github.com/ethereum/go-ethereum/common/hexutil"
+ 
++	accountstore "github.com/zenon-network/go-zenon/chain/account"
++	"github.com/zenon-network/go-zenon/chain/nom"
++	"github.com/zenon-network/go-zenon/chain/store"
+ 	"github.com/zenon-network/go-zenon/common"
++	"github.com/zenon-network/go-zenon/common/db"
+ 	"github.com/zenon-network/go-zenon/common/types"
++	"github.com/zenon-network/go-zenon/consensus/api"
+ 	"github.com/zenon-network/go-zenon/vm/constants"
+ 	"github.com/zenon-network/go-zenon/vm/embedded/definition"
+ 	"github.com/zenon-network/go-zenon/wallet"
+@@ -75,6 +81,7 @@ func TestPtlc_StoredInfoValidation(t *testing.T) {
+ func TestPtlc_VerifySignatureStableErrors(t *testing.T) {
+ 	id := types.Hash{}
+ 	destination := User1.Address
++	chainIdentifier := uint64(100)
+ 	privateKeyBytes := bytes.Repeat([]byte{1}, 32)
+ 	privateKey, publicKey := btcec.PrivKeyFromBytes(privateKeyBytes)
+ 
+@@ -87,16 +94,106 @@ func TestPtlc_VerifySignatureStableErrors(t *testing.T) {
+ 		PointType:      definition.PointTypeBIP340,
+ 		PointLock:      schnorr.SerializePubKey(publicKey),
+ 	}
+-	message := definition.GetPtlcUnlockMessage(info.PointType, id, destination)
++	message := definition.GetPtlcUnlockMessage(chainIdentifier, info.PointType, id, destination)
+ 
+-	common.ExpectError(t, verifyPtlcSignature(info, id, destination, bytes.Repeat([]byte{0xff}, 64)), constants.ErrInvalidPointSignature)
++	common.ExpectError(t, verifyPtlcSignature(info, chainIdentifier, id, destination, bytes.Repeat([]byte{0xff}, 64)), constants.ErrInvalidPointSignature)
+ 
+ 	signature, err := schnorr.Sign(privateKey, message)
+ 	common.FailIfErr(t, err)
+ 
+ 	info.PointLock = bytes.Repeat([]byte{0xff}, 32)
+-	common.ExpectError(t, verifyPtlcSignature(info, id, destination, signature.Serialize()), constants.ErrInvalidPointLock)
++	common.ExpectError(t, verifyPtlcSignature(info, chainIdentifier, id, destination, signature.Serialize()), constants.ErrInvalidPointLock)
+ 
+ 	info.PointType = 99
+-	common.ExpectError(t, verifyPtlcSignature(info, id, destination, nil), constants.ErrInvalidPointType)
++	common.ExpectError(t, verifyPtlcSignature(info, chainIdentifier, id, destination, nil), constants.ErrInvalidPointType)
++}
++
++type testPtlcContext struct {
++	store.Account
++	momentum *nom.Momentum
++}
++
++func newTestPtlcContext(chainIdentifier uint64, timestamp int64) *testPtlcContext {
++	t := time.Unix(timestamp, 0)
++	return &testPtlcContext{
++		Account: accountstore.NewAccountStore(types.PtlcContract, db.NewMemDB()),
++		momentum: &nom.Momentum{
++			ChainIdentifier: chainIdentifier,
++			Timestamp:       &t,
++		},
++	}
++}
++
++func (ctx *testPtlcContext) MomentumStore() store.Momentum {
++	return nil
++}
++
++func (ctx *testPtlcContext) GetFrontierMomentum() (*nom.Momentum, error) {
++	return ctx.momentum, nil
++}
++
++func (ctx *testPtlcContext) GetGenesisMomentum() *nom.Momentum {
++	return ctx.momentum
++}
++
++func (ctx *testPtlcContext) Save()  {}
++func (ctx *testPtlcContext) Reset() {}
++func (ctx *testPtlcContext) Done()  {}
++
++func (ctx *testPtlcContext) AddBalance(ts *types.ZenonTokenStandard, amount *big.Int) {}
++func (ctx *testPtlcContext) SubBalance(ts *types.ZenonTokenStandard, amount *big.Int) {}
++
++func (ctx *testPtlcContext) IsAcceleratorSporkEnforced() bool {
++	return true
++}
++
++func (ctx *testPtlcContext) IsBridgeAndLiquiditySporkEnforced() bool {
++	return true
++}
++
++func (ctx *testPtlcContext) IsHtlcSporkEnforced() bool {
++	return true
++}
++
++func (ctx *testPtlcContext) IsPtlcSporkEnforced() bool {
++	return true
++}
++
++func (ctx *testPtlcContext) GetPillarWeights() (map[string]*big.Int, error) {
++	return nil, nil
++}
++
++func (ctx *testPtlcContext) EpochTicker() common.Ticker {
++	return common.NewTicker(time.Unix(0, 0), time.Second)
++}
++
++func (ctx *testPtlcContext) EpochStats(epoch uint64) (*api.EpochStats, error) {
++	return nil, nil
++}
++
++func (ctx *testPtlcContext) GetPillarDelegationsByEpoch(epoch uint64) (map[string]*types.PillarDelegationDetail, error) {
++	return nil, nil
++}
++
++func TestPtlc_UnlockRejectsCorruptStoredPointType(t *testing.T) {
++	chainIdentifier := uint64(100)
++	id := types.NewHash([]byte("corrupt-point-type"))
++	ctx := newTestPtlcContext(chainIdentifier, 100)
++
++	ptlcInfo := &definition.PtlcInfo{
++		Id:             id,
++		TimeLocked:     User1.Address,
++		TokenStandard:  types.ZnnTokenStandard,
++		Amount:         big.NewInt(1),
++		ExpirationTime: 200,
++		PointType:      99,
++		PointLock:      User1.Public,
++	}
++	common.FailIfErr(t, ptlcInfo.Save(ctx.Storage()))
++
++	blocks, err := unlockPtlc(ctx, &nom.AccountBlock{Address: User1.Address}, id, User1.Address, nil)
++	common.ExpectError(t, err, constants.ErrInvalidPointType)
++	if blocks != nil {
++		t.Fatalf("expected no generated blocks, got %d", len(blocks))
++	}
+ }
+diff --git a/vm/embedded/tests/ptlc_test.go b/vm/embedded/tests/ptlc_test.go
+index 443e239..86c6dde 100644
+--- a/vm/embedded/tests/ptlc_test.go
++++ b/vm/embedded/tests/ptlc_test.go
+@@ -17,7 +17,24 @@ import (
+ 	"github.com/zenon-network/go-zenon/zenon/mock"
+ )
+ 
+-func activatePtlc(z mock.MockZenon) {
++func activatePtlc(t *testing.T, z mock.MockZenon) {
++	t.Helper()
++
++	oldSporkId := types.PtlcSpork.SporkId
++	oldImplemented := types.ImplementedSporksMap[oldSporkId]
++	var activatedSporkId types.Hash
++	t.Cleanup(func() {
++		if oldImplemented {
++			types.ImplementedSporksMap[oldSporkId] = true
++		} else {
++			delete(types.ImplementedSporksMap, oldSporkId)
++		}
++		if activatedSporkId != oldSporkId {
++			delete(types.ImplementedSporksMap, activatedSporkId)
++		}
++		types.PtlcSpork.SporkId = oldSporkId
++	})
++
+ 	sporkAPI := embedded.NewSporkApi(z)
+ 	z.InsertSendBlock(&nom.AccountBlock{
+ 		Address:   g.Spork.Address,
+@@ -42,9 +59,14 @@ func activatePtlc(z mock.MockZenon) {
+ 	z.InsertNewMomentum()
+ 	types.PtlcSpork.SporkId = id
+ 	types.ImplementedSporksMap[id] = true
++	activatedSporkId = id
+ 	z.InsertMomentumsTo(20)
+ }
+ 
++func ptlcUnlockMessage(z mock.MockZenon, pointType uint8, id types.Hash, destination types.Address) []byte {
++	return definition.GetPtlcUnlockMessage(z.Chain().ChainIdentifier(), pointType, id, destination)
++}
++
+ func TestPtlc_spork_gating(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	defer z.StopPanic()
+@@ -61,7 +83,7 @@ func TestPtlc_spork_gating(t *testing.T) {
+ 		Amount:        big.NewInt(10 * g.Zexp),
+ 	}, constants.ErrContractDoesntExist, mock.NoVmChanges)
+ 
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	z.InsertSendBlock(&nom.AccountBlock{
+ 		Address:   g.User1.Address,
+@@ -101,7 +123,7 @@ t=2001-09-09T01:46:50+0000 lvl=dbug msg=created module=embedded contract=spork s
+ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork spork="&{Id:d82f15026ad67abbc99786a9ed5b667ac578a78fb80df4ea573c22e727fd736a Name:spork-ptlc Description:activate spork for ptlc Activated:true EnforcementHeight:9}"
+ t=2001-09-09T01:49:50+0000 lvl=dbug msg="invalid create - cannot create zero amount" module=embedded contract=ptlc address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	z.InsertSendBlock(&nom.AccountBlock{
+@@ -132,7 +154,7 @@ func TestPtlc_unlock(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	ptlcApi := embedded.NewPtlcApi(z)
+ 	defer z.StopPanic()
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -184,7 +206,7 @@ func TestPtlc_unlock(t *testing.T) {
+ 	z.InsertNewMomentum()
+ 
+ 	// user 2 tries to unlock with wrong signature
+-	wrong_message := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	wrong_message := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	wrong_message[0] ^= 1
+ 	wrong_signature := g.User2.Sign(wrong_message)
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -231,7 +253,7 @@ func TestPtlc_unlock(t *testing.T) {
+ 	z.InsertNewMomentum()
+ 
+ 	// user2 unlocks with correct signature
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+ 		Address:   g.User2.Address,
+@@ -265,7 +287,7 @@ func TestPtlc_proxy_unlock(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	ptlcApi := embedded.NewPtlcApi(z)
+ 	defer z.StopPanic()
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -304,7 +326,7 @@ func TestPtlc_proxy_unlock(t *testing.T) {
+ 	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 10*g.Zexp)
+ 	z.ExpectBalance(types.PtlcContract, types.QsrTokenStandard, 0*g.Zexp)
+ 
+-	unlock_message := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	unlock_message := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 
+ 	// user 3 tries to proxy unlock for user 2 with wrong signature
+ 	wrong_signature := g.User3.Sign(unlock_message)
+@@ -341,7 +363,7 @@ func TestPtlc_proxy_unlock(t *testing.T) {
+ 
+ 	// user3 proxy unlocks for user 2 with correct signature
+ 	defer z.CallContract(&nom.AccountBlock{
+-		Address:   g.User2.Address,
++		Address:   g.User3.Address,
+ 		ToAddress: types.PtlcContract,
+ 		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
+ 			ptlcId,          // entry id
+@@ -369,6 +391,42 @@ func TestPtlc_proxy_unlock(t *testing.T) {
+ 
+ }
+ 
++func TestPtlc_wrongChainSignature(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	createBlock := z.InsertSendBlock(&nom.AccountBlock{
++		Address:   g.User1.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName,
++			int64(genesisTimestamp+300),
++			definition.PointTypeED25519,
++			g.User2.Public,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(10 * g.Zexp),
++	}, nil, mock.SkipVmChanges)
++	z.InsertNewMomentum()
++
++	ptlcId := createBlock.Hash
++	wrongChainMessage := definition.GetPtlcUnlockMessage(z.Chain().ChainIdentifier()+1, definition.PointTypeED25519, ptlcId, g.User2.Address)
++	wrongChainSignature := g.User2.Sign(wrongChainMessage)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			ptlcId,
++			wrongChainSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, constants.ErrInvalidPointSignature)
++	z.InsertNewMomentum()
++
++	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 10*g.Zexp)
++}
++
+ func TestPtlc_reclaim(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	ptlcApi := embedded.NewPtlcApi(z)
+@@ -380,7 +438,7 @@ t=2001-09-09T01:50:00+0000 lvl=dbug msg=created module=embedded contract=ptlc pt
+ t=2001-09-09T01:53:20+0000 lvl=dbug msg="invalid unlock - entry is expired" module=embedded contract=ptlc id=82eaa406d0762b558187eff923533242e0ebe801daa1aede897b6d2e3073eaad address=z1qr4pexnnfaexqqz8nscjjcsajy5hdqfkgadvwx time=1000000400 expiration-time=1000000300
+ t=2001-09-09T01:53:40+0000 lvl=dbug msg=reclaimed module=embedded contract=ptlc ptlcInfo="Id:82eaa406d0762b558187eff923533242e0ebe801daa1aede897b6d2e3073eaad TimeLocked:z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz TokenStandard:zts1qsrxxxxxxxxxxxxxmrhjll Amount:1000000000 ExpirationTime:1000000300 PointType:0 PointLock:tUJu3P7Drp25XP662lIjyFlFpvj8bWUpyC+0y5YTzXM= "
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -420,7 +478,7 @@ t=2001-09-09T01:53:40+0000 lvl=dbug msg=reclaimed module=embedded contract=ptlc
+ 	z.ExpectBalance(types.PtlcContract, types.QsrTokenStandard, 10*g.Zexp)
+ 
+ 	// user2 tries to unlock expired with correct signature
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+ 		Address:   g.User2.Address,
+@@ -471,7 +529,7 @@ t=2001-09-09T01:46:50+0000 lvl=dbug msg=created module=embedded contract=spork s
+ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork spork="&{Id:d82f15026ad67abbc99786a9ed5b667ac578a78fb80df4ea573c22e727fd736a Name:spork-ptlc Description:activate spork for ptlc Activated:true EnforcementHeight:9}"
+ t=2001-09-09T01:51:40+0000 lvl=dbug msg="invalid create - cannot create already expired" module=embedded contract=ptlc address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz time=1000000300 expiration-time=1000000300
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	z.InsertMomentumsTo(30)
+ 	// Sun Sep 09 2001 01:51:40 GMT+0000
+@@ -502,7 +560,7 @@ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork
+ t=2001-09-09T01:50:00+0000 lvl=dbug msg=created module=embedded contract=ptlc ptlcInfo="Id:6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 TimeLocked:z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz TokenStandard:zts1znnxxxxxxxxxxxxx9z4ulx Amount:1000000000 ExpirationTime:1000000300 PointType:0 PointLock:tUJu3P7Drp25XP662lIjyFlFpvj8bWUpyC+0y5YTzXM= "
+ t=2001-09-09T01:51:40+0000 lvl=dbug msg="invalid unlock - entry is expired" module=embedded contract=ptlc id=6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 address=z1qr4pexnnfaexqqz8nscjjcsajy5hdqfkgadvwx time=1000000300 expiration-time=1000000300
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -526,7 +584,7 @@ t=2001-09-09T01:51:40+0000 lvl=dbug msg="invalid unlock - entry is expired" modu
+ 	// check the time in the logs
+ 
+ 	// user2 tries to unlock expired with correct preimage
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+ 		Address:   g.User2.Address,
+@@ -551,7 +609,7 @@ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork
+ t=2001-09-09T01:50:00+0000 lvl=dbug msg=created module=embedded contract=ptlc ptlcInfo="Id:6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 TimeLocked:z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz TokenStandard:zts1znnxxxxxxxxxxxxx9z4ulx Amount:1000000000 ExpirationTime:1000000300 PointType:0 PointLock:tUJu3P7Drp25XP662lIjyFlFpvj8bWUpyC+0y5YTzXM= "
+ t=2001-09-09T01:51:40+0000 lvl=dbug msg=reclaimed module=embedded contract=ptlc ptlcInfo="Id:6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 TimeLocked:z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz TokenStandard:zts1znnxxxxxxxxxxxxx9z4ulx Amount:1000000000 ExpirationTime:1000000300 PointType:0 PointLock:tUJu3P7Drp25XP662lIjyFlFpvj8bWUpyC+0y5YTzXM= "
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -601,7 +659,7 @@ t=2001-09-09T01:53:20+0000 lvl=dbug msg="invalid reclaim - permission denied" mo
+ t=2001-09-09T01:53:30+0000 lvl=dbug msg="invalid reclaim - permission denied" module=embedded contract=ptlc id=6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 address=z1qrs2lpccnsneglhnnfwvlsj0qncnxjnwlfmjac
+ t=2001-09-09T01:53:40+0000 lvl=dbug msg=reclaimed module=embedded contract=ptlc ptlcInfo="Id:6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 TimeLocked:z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz TokenStandard:zts1znnxxxxxxxxxxxxx9z4ulx Amount:1000000000 ExpirationTime:1000000300 PointType:0 PointLock:tUJu3P7Drp25XP662lIjyFlFpvj8bWUpyC+0y5YTzXM= "
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -708,7 +766,7 @@ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork
+ t=2001-09-09T01:50:00+0000 lvl=dbug msg="invalid unlock - entry does not exist" module=embedded contract=ptlc id=7efdcca315f86cdb04e84113bfc5f003fa49c4b3f9b287cd3b4a08d8ccdf6ffc address=z1qr4pexnnfaexqqz8nscjjcsajy5hdqfkgadvwx
+ t=2001-09-09T01:50:10+0000 lvl=dbug msg="invalid reclaim - entry does not exist" module=embedded contract=ptlc id=7efdcca315f86cdb04e84113bfc5f003fa49c4b3f9b287cd3b4a08d8ccdf6ffc address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	nonexistentId := types.HexToHashPanic("7efdcca315f86cdb04e84113bfc5f003fa49c4b3f9b287cd3b4a08d8ccdf6ffc")
+ 
+@@ -716,7 +774,7 @@ t=2001-09-09T01:50:10+0000 lvl=dbug msg="invalid reclaim - entry does not exist"
+ 	common.Json(ptlcApi.GetById(nonexistentId)).Error(t, constants.ErrDataNonExistent)
+ 
+ 	// unlock nonexistent
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, nonexistentId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, nonexistentId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+ 		Address:   g.User2.Address,
+@@ -747,7 +805,7 @@ func TestPtlc_nonexistent_after_unlock(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	ptlcApi := embedded.NewPtlcApi(z)
+ 	defer z.StopPanic()
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -767,7 +825,7 @@ func TestPtlc_nonexistent_after_unlock(t *testing.T) {
+ 	ptlcId := types.HexToHashPanic("6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79")
+ 
+ 	// user2 unlocks with correct signature
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+ 		Address:   g.User2.Address,
+@@ -823,7 +881,7 @@ t=2001-09-09T01:53:20+0000 lvl=dbug msg=reclaimed module=embedded contract=ptlc
+ t=2001-09-09T01:53:30+0000 lvl=dbug msg="invalid unlock - entry does not exist" module=embedded contract=ptlc id=6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 address=z1qr4pexnnfaexqqz8nscjjcsajy5hdqfkgadvwx
+ t=2001-09-09T01:53:40+0000 lvl=dbug msg="invalid reclaim - entry does not exist" module=embedded contract=ptlc id=6809e10e211036a33d43ce4a72b71a5389ac8050df1249edefd52b632ce45b79 address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user 1 creates a ptlc for user 2
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -858,7 +916,7 @@ t=2001-09-09T01:53:40+0000 lvl=dbug msg="invalid reclaim - entry does not exist"
+ 	common.Json(ptlcApi.GetById(ptlcId)).Error(t, constants.ErrDataNonExistent)
+ 
+ 	// unlock nonexistent
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeED25519, ptlcId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+ 		Address:   g.User2.Address,
+@@ -893,7 +951,7 @@ t=2001-09-09T01:46:50+0000 lvl=dbug msg=created module=embedded contract=spork s
+ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork spork="&{Id:d82f15026ad67abbc99786a9ed5b667ac578a78fb80df4ea573c22e727fd736a Name:spork-ptlc Description:activate spork for ptlc Activated:true EnforcementHeight:9}"
+ t=2001-09-09T01:50:00+0000 lvl=dbug msg="invalid create - cannot create already expired" module=embedded contract=ptlc address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz time=1000000200 expiration-time=999999700
+ `)
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	// user tries to create expired ptlc
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -930,7 +988,7 @@ func TestPtlc_unlockBIP340(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	ptlcApi := embedded.NewPtlcApi(z)
+ 	defer z.StopPanic()
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	prv1, _ := btcec.PrivKeyFromBytes(g.Secp1PrvKey)
+ 
+@@ -974,7 +1032,7 @@ func TestPtlc_unlockBIP340(t *testing.T) {
+ 	"pointLock": "fiG8+7m7odpA43OSLYoUwZ0RvTtY6wwnAPKWVeOJ5ww="
+ }
+ `)
+-	mh := definition.GetPtlcUnlockMessage(definition.PointTypeBIP340, ptlcId, g.User2.Address)
++	mh := ptlcUnlockMessage(z, definition.PointTypeBIP340, ptlcId, g.User2.Address)
+ 
+ 	// user 2 tries to unlock with wrong signature type
+ 	wrong_signature := g.User2.Sign(mh)
+@@ -1040,7 +1098,7 @@ func TestPtlc_proxyUnlockBIP340(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	defer z.StopPanic()
+ 
+-	activatePtlc(z)
++	activatePtlc(t, z)
+ 
+ 	prv1, _ := btcec.PrivKeyFromBytes(g.Secp1PrvKey)
+ 	prv2, pub2 := btcec.PrivKeyFromBytes(g.Secp2PrvKey)
+@@ -1061,7 +1119,7 @@ func TestPtlc_proxyUnlockBIP340(t *testing.T) {
+ 	z.InsertNewMomentum()
+ 
+ 	ptlcId := createBlock.Hash
+-	unlockMessage := definition.GetPtlcUnlockMessage(definition.PointTypeBIP340, ptlcId, g.User2.Address)
++	unlockMessage := ptlcUnlockMessage(z, definition.PointTypeBIP340, ptlcId, g.User2.Address)
+ 
+ 	wrongSignerSignature, _ := schnorr.Sign(prv1, unlockMessage)
+ 	defer z.CallContract(&nom.AccountBlock{
+-- 
+2.53.0.windows.2
+

@@ -1,0 +1,36 @@
+15:28:58 start here
+15:28:58   ok   the node answers and the spork is active
+15:28:58   ok   the RPC node has all four peers: 4 of 4
+15:28:58 swap, step by step: Alice and Bob as lab keys, expiries 6 and 12 minutes
+15:29:10   ok   Bob's Create accepted
+15:29:40   ok   Alice's Create accepted, after her five checks of Bob's entry passed
+15:29:43   ok   while her unlock is on its way the button is gone, so it cannot be sent twice
+15:30:11   ok   Alice's Unlock accepted
+15:30:11   ok   Bob reads t off the chain and it is the scalar of T
+15:30:31   ok   Bob's Unlock with t + d accepted
+15:30:31   ok   both entries are paid and the bench says so
+15:30:31 a BIP-340 key lock with an open destination, opened by Bob with a signature
+15:31:01   ok   Create with a BIP-340 lock and no fixed destination accepted: Lock 1 ZNN to a BIP-340 key | Alice | Signing | Published | In a momentum | Acce
+15:31:02   ok   the bench predicts the unlock will be accepted
+15:31:30   ok   Unlock by signature accepted: Bob was not named by the entry, the signature named him
+15:31:30 a wrong witness, sent anyway
+15:31:51   ok   Create to a pasted point accepted
+15:31:52   ok   the bench predicts the refusal
+15:32:11   ok   the contract refuses the wrong scalar and the page says why: s does not open the lock | included in momentum 2,915; the contract answered 1 momentum later, 10 s by the chain's clock
+15:32:31   ok   the right scalar, 1, opens it
+15:32:31 znn-cli from the Programs bench
+15:32:33   ok   the CLI ran in the lab container and its output streamed to the page
+15:32:33 raw RPC
+15:32:36   ok   getById on an entry that was paid says only "data non existent": data non existent
+15:32:36 the swap again, abandoned after both have locked: expiries 2 and 6 minutes
+15:33:01   ok   Bob's Create accepted
+15:33:31   ok   Alice's Create accepted, after her five checks of Bob's entry passed
+15:34:02   ok   a reclaim before the expiry is refused
+15:34:02 waiting for Alice's entry to expire
+15:35:30   ok   Alice's Reclaim accepted after her expiry
+15:35:30 waiting for Bob's entry to expire
+15:39:01   ok   Bob's Reclaim accepted after his, which is later because he locked first
+15:39:01   ok   both entries are returned and the bench says so
+
+All checks passed
+exit 0

@@ -1,0 +1,43 @@
+{
+  "claim": {
+    "destination_script_pubkey_hex": "51202b07498923bde6b9779fde46f5308dec34f464f01929af5b66be30fc3e0b3011",
+    "locktime": 0,
+    "output_value_sats": 199000,
+    "raw_tx_hex": "020000000001011f1e1d1c1b1a191817161514131211100f0e0d0c0b0a090807060504030201000100000000fdffffff0158090300000000002251202b07498923bde6b9779fde46f5308dec34f464f01929af5b66be30fc3e0b3011014074f5369adf1b5e5a1f70be441ceb500684a94cb39a85267242005919438046e43720983bc7c3a5a58228b54e921e0399ca493035e7d0d88e6ffe7c68e439025100000000",
+    "sequence": 4294967293,
+    "sighash_hex": "139aa1aa431a52ae7e461638f81cb1e3395e38c6ef815c5c202fabbcbd23530f",
+    "txid_hex": "6ef1a87b8c7741138a096c7ba65aabc398d4fd065b33d844a94fcd24b9ec3756",
+    "version": 2,
+    "wtxid_hex": "6b5af7dfc11f8c961313052724ef6217c58764126b409362581ea0391525bc7f"
+  },
+  "funding": {
+    "script_pubkey_hex": "512004812b3a096ac30b5c6beb21812ec7a5504abf47199e0c7f00b3708808061c5a",
+    "txid_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "value_sats": 200000,
+    "vout": 1
+  },
+  "note": "Public synthetic data only. Transactions are alternatives spending the same fictional output. Offline signature and commitment qualification; no funding, broadcast, MTP finality, fee adequacy, or chain-liveness claim.",
+  "refund": {
+    "destination_script_pubkey_hex": "5120483a336466d31e2be85892931ec6613ca19f9a6762329698b4c3e7151c01122b",
+    "locktime": 500000100,
+    "output_value_sats": 199000,
+    "raw_tx_hex": "020000000001011f1e1d1c1b1a191817161514131211100f0e0d0c0b0a090807060504030201000100000000fdffffff015809030000000000225120483a336466d31e2be85892931ec6613ca19f9a6762329698b4c3e7151c01122b0340d39fa96297c6b23c43f10d05545673b13c0b937e4439657a2c6134a15123880fb71f5d643690106ee46158c67d145540a1af986b86cd2ded1ca42c83bf5d1e6d29046465cd1db1752056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac21c11fc559d9c96c5953895d3150e64ebf3dd696a0b08e758650b48ff6251d7e60d16465cd1d",
+    "sequence": 4294967293,
+    "sighash_hex": "e9c3a5933d35d54e4868c1a667c4a9e37aa11be5c9433d8c9e465aafb9afffee",
+    "txid_hex": "ff208317af726787517a2e9c995c3c11805d15421f50566dc57dc6236502e672",
+    "version": 2,
+    "wtxid_hex": "d7104e3fde224261de2a800444a6a1d121dd2b6cdfc152441d119cb4f1419cad"
+  },
+  "schema": "ptlc-bitcoin-transactions-v1",
+  "taproot": {
+    "control_block_hex": "c11fc559d9c96c5953895d3150e64ebf3dd696a0b08e758650b48ff6251d7e60d1",
+    "internal_key_xonly_hex": "1fc559d9c96c5953895d3150e64ebf3dd696a0b08e758650b48ff6251d7e60d1",
+    "leaf_version": 192,
+    "merkle_root_hex": "bcd59f19efaf595770b8f19d42c62c193591a86d2dfc039e5fdc6501af935f10",
+    "output_key_xonly_hex": "04812b3a096ac30b5c6beb21812ec7a5504abf47199e0c7f00b3708808061c5a",
+    "refund_key_xonly_hex": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+    "refund_leaf_script_hex": "046465cd1db1752056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac",
+    "refund_locktime": 500000100,
+    "tapleaf_hash_hex": "bcd59f19efaf595770b8f19d42c62c193591a86d2dfc039e5fdc6501af935f10"
+  }
+}

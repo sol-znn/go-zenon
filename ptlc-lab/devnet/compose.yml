@@ -1,0 +1,101 @@
+# The branch's PTLC devnet (docker/devnet at the root of this repository), run
+# under its own names and subnet so it cannot collide with the znnd-devnet-*
+# set that the root docker-compose.yml starts. The image is built by
+# ../docker/Dockerfile from the go-zenon tree this directory sits in. The
+# configs in assets/ are the branch's with 172.30.0.x rewritten to 10.69.0.x.
+#
+# The usual way to run it is the whole lab, from the repository root:
+#
+#   docker compose up -d --build
+#
+# This file is included by ../compose.yml and also stands alone:
+#
+#   docker compose -p ptlc -f compose.yml up -d --build
+#   docker compose -p ptlc -f compose.yml down -v     # wipe and reset
+#
+# RPC: http://localhost:35997 and ws://localhost:35998 (rpc node),
+# http://localhost:35991 (pillar 1). Chain id 69. Funded accounts: indexes 1
+# and 3 of the dev mnemonic in ../scenarios/nom-to-btc/nom/nom.go.
+x-node: &node
+  image: zenon-ptlc/znnd:dev
+  # Every node names the same build. BuildKit builds it once.
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+    target: znnd
+    additional_contexts:
+      gozenon: ../..
+  restart: unless-stopped
+  volumes:
+    - ./assets:/devnet:ro
+
+services:
+  pillar:
+    <<: *node
+    container_name: ptlc-devnet-pillar
+    environment: { ZNND_ROLE: pillar }
+    ports: ["127.0.0.1:35991:35997"]
+    volumes:
+      - ./assets:/devnet:ro
+      - pillar-data:/root/.znn
+    networks:
+      devnet: { ipv4_address: 10.69.0.10 }
+  pillar2:
+    <<: *node
+    container_name: ptlc-devnet-pillar2
+    depends_on: [pillar]
+    environment: { ZNND_ROLE: pillar2 }
+    volumes:
+      - ./assets:/devnet:ro
+      - pillar2-data:/root/.znn
+    networks:
+      devnet: { ipv4_address: 10.69.0.12 }
+  pillar3:
+    <<: *node
+    container_name: ptlc-devnet-pillar3
+    depends_on: [pillar]
+    environment: { ZNND_ROLE: pillar3 }
+    volumes:
+      - ./assets:/devnet:ro
+      - pillar3-data:/root/.znn
+    networks:
+      devnet: { ipv4_address: 10.69.0.13 }
+  rpc:
+    <<: *node
+    container_name: ptlc-devnet-rpc
+    depends_on: [pillar, observer]
+    environment: { ZNND_ROLE: rpc }
+    ports: ["127.0.0.1:35997:35997", "127.0.0.1:35998:35998"]
+    volumes:
+      - ./assets:/devnet:ro
+      - rpc-data:/root/.znn
+    networks:
+      devnet: { ipv4_address: 10.69.0.11 }
+  observer:
+    <<: *node
+    container_name: ptlc-devnet-observer
+    depends_on: [pillar]
+    environment: { ZNND_ROLE: observer }
+    volumes:
+      - ./assets:/devnet:ro
+      - observer-data:/root/.znn
+    networks:
+      devnet: { ipv4_address: 10.69.0.14 }
+
+networks:
+  devnet:
+    name: ptlc-devnet
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.69.0.0/24
+
+# Named, like the network and the containers, so the chain is the same chain
+# whichever compose project starts it: the lab from the repository root, or
+# this file alone.
+volumes:
+  pillar-data: { name: ptlc-devnet_pillar-data }
+  pillar2-data: { name: ptlc-devnet_pillar2-data }
+  pillar3-data: { name: ptlc-devnet_pillar3-data }
+  rpc-data: { name: ptlc-devnet_rpc-data }
+  observer-data: { name: ptlc-devnet_observer-data }

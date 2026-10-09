@@ -1,0 +1,26 @@
+01:53:14   ok   the page shows a card for each of the lab's 14 scenarios: 14 cards
+01:53:14   ok   the page shows the chain is live: Chain live, block 5,451
+01:53:14 Broken locks are turned away (bad-locks, 3 steps)
+01:53:34     [done, rejected] Alice tries a lock to a key that cannot exist: The network would not take it: invalid point lock. Nothing left the account.
+01:53:34     [done, refused] Alice tries a lock whose deadline has passed: The contract refused, as it should
+01:53:34     [done] The 1 ZNN comes straight back: 1 ZNN paid to Alice
+01:53:34   ok   bad-locks: the page says it passed: Passed | The impossible lock never left Alice's account, and the expired one was refunded | 16 s; 21 s here
+01:53:34   ok   bad-locks: all 3 steps are drawn settled: done done done
+01:53:34   ok   bad-locks: each call is drawn with the outcome it was meant to meet: rejected refused
+01:53:34 Swap ZNN for QSR (swap, 9 steps)
+01:55:34     [done] Alice sends Bob a lock only she can open: With a second number they both know, so the two locks will not look alike
+01:55:34     [done, accepted] Bob locks 1 ZNN for Alice: The contract accepted
+01:55:34     [done] Alice checks Bob's lock on the chain: Right amount, right lock, pays Alice, and it outlasts hers
+01:55:34     [done, accepted] Alice locks 10 QSR for Bob: The contract accepted
+01:55:34     [done, accepted] Alice takes the ZNN, which reveals her secret: The contract accepted
+01:55:34     [done] Alice receives 1 ZNN: 1 ZNN paid to Alice
+01:55:34     [done] Bob reads the secret from the chain: It is in Alice's unlock, public to everyone now
+01:55:34     [done, accepted] Bob takes the QSR: The contract accepted
+01:55:34     [done] Bob receives 10 QSR: 10 QSR paid to Bob
+01:55:34   ok   swap: the page says it passed: Passed | Alice got 1 ZNN and Bob got 10 QSR, with nobody in between | 1 min 56 s; 120 s here
+01:55:34   ok   swap: all 9 steps are drawn settled: done done done done done done done done done
+01:55:34   ok   swap: each call is drawn with the outcome it was meant to meet: accepted accepted accepted accepted
+01:55:35 tally on the page (passed / failed / not run): 3 / 0 / 11
+01:55:36   ok   after a reload the last result is still shown, read back from the lab: Passed in 1 min 56 s
+
+All checks passed

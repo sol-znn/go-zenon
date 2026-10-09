@@ -1,0 +1,1109 @@
+From a14f8fcdd06691a20530d1e83f51dae8ce3acdc0 Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Wed, 7 Oct 2026 23:43:32 -0400
+Subject: [PATCH] ptlc: the ptlc.* command family, built against znn_sdk_dart
+ 1.0.0
+
+Create, unlock, proxyUnlock, reclaim, get, inspect and monitor as for htlc,
+plus the key and adaptor helpers a swap needs around them (keygen, point,
+tweak, tweakSecret, message, sign, adaptorSign/Verify/Complete/Extract).
+The pubspec overrides znn_sdk_dart to the sibling ptlc worktree and drops
+the bip39 package, whose pointycastle 3 pin conflicts with SDK 1.0.0; the
+mnemonic check uses the SDK's own Mnemonic.validateMnemonic.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ .gitignore          |   1 +
+ lib/global.dart     |  25 ++
+ lib/lib.dart        |   1 +
+ lib/ptlc.dart       | 734 ++++++++++++++++++++++++++++++++++++++++++++
+ lib/utils/args.dart |   6 +
+ lib/wallet.dart     |   3 +-
+ pubspec.lock        |  72 +++--
+ pubspec.yaml        |  56 ++--
+ 8 files changed, 843 insertions(+), 55 deletions(-)
+ create mode 100644 lib/ptlc.dart
+
+diff --git a/.gitignore b/.gitignore
+index e944b18..97d6997 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -43,3 +43,4 @@ app.*.map.json
+ # Exceptions to above rules.
+ !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
+ example/example.dart
++build/
+diff --git a/lib/global.dart b/lib/global.dart
+index 9904706..f42cc18 100644
+--- a/lib/global.dart
++++ b/lib/global.dart
+@@ -63,6 +63,11 @@ List<String> commandsWithWallet = [
+   'htlc.denyProxy',
+   'htlc.allowProxy',
+   'htlc.monitor',
++  'ptlc.create',
++  'ptlc.unlock',
++  'ptlc.proxyUnlock',
++  'ptlc.reclaim',
++  'ptlc.monitor',
+   'bridge.wrap.token',
+   'bridge.unwrap.redeem',
+   'bridge.unwrap.redeemAll',
+@@ -94,6 +99,18 @@ List<String> commandsWithoutWallet = [
+   'htlc.get',
+   'htlc.inspect',
+   'htlc.getProxyStatus',
++  'ptlc.get',
++  'ptlc.inspect',
++  'ptlc.message',
++  'ptlc.sign',
++  'ptlc.keygen',
++  'ptlc.point',
++  'ptlc.tweak',
++  'ptlc.tweakSecret',
++  'ptlc.adaptorSign',
++  'ptlc.adaptorVerify',
++  'ptlc.adaptorComplete',
++  'ptlc.adaptorExtract',
+   'stats.osInfo',
+   'stats.networkInfo',
+   'stats.processInfo',
+@@ -122,6 +139,14 @@ List<String> commandsWithoutWallet = [
+ ];
+ 
+ List<String> commandsWithoutConnection = [
++  'ptlc.keygen',
++  'ptlc.point',
++  'ptlc.tweak',
++  'ptlc.tweakSecret',
++  'ptlc.adaptorSign',
++  'ptlc.adaptorVerify',
++  'ptlc.adaptorComplete',
++  'ptlc.adaptorExtract',
+   'version',
+   'wallet.createNew',
+   'wallet.createFromMnemonic',
+diff --git a/lib/lib.dart b/lib/lib.dart
+index 342c110..cdb8f06 100644
+--- a/lib/lib.dart
++++ b/lib/lib.dart
+@@ -3,6 +3,7 @@ export 'bridge.dart';
+ export 'general.dart';
+ export 'global.dart';
+ export 'htlc.dart';
++export 'ptlc.dart';
+ export 'liquidity.dart';
+ export 'orchestrator.dart';
+ export 'pillar.dart';
+diff --git a/lib/ptlc.dart b/lib/ptlc.dart
+new file mode 100644
+index 0000000..278cd89
+--- /dev/null
++++ b/lib/ptlc.dart
+@@ -0,0 +1,734 @@
++import 'dart:async';
++import 'dart:io';
++import 'dart:math';
++
++import 'package:collection/collection.dart';
++import 'package:convert/convert.dart';
++import 'package:dcli/dcli.dart' hide verbose;
++import 'package:znn_cli_dart/lib.dart';
++import 'package:znn_sdk_dart/znn_sdk_dart.dart';
++
++// The ptlc command family. The contract calls mirror htlc's; the key and
++// adaptor commands are what a swap needs around them. Nothing here talks to
++// a counterparty: the two parties of a swap run these commands in turn and
++// pass each other the values they print.
++
++void ptlcMenu() {
++  print('  ${white('PTLC')}');
++  print(
++      '    ptlc.create tokenStandard amount expirationTime (in hours) pointType pointLock [destination]');
++  print('    ptlc.unlock id [witness]');
++  print('    ptlc.proxyUnlock id destination witness');
++  print('    ptlc.reclaim id');
++  print('    ptlc.get id');
++  print('    ptlc.inspect blockHash');
++  print('    ptlc.monitor id');
++  print('    ptlc.message id destination pointType');
++  print('    ptlc.sign id destination secretKey [pointType]');
++  print('    ptlc.keygen');
++  print('    ptlc.point secret');
++  print('    ptlc.tweak point tweak');
++  print('    ptlc.tweakSecret secret tweak');
++  print('    ptlc.adaptorSign secretKey message adaptorPoint');
++  print('    ptlc.adaptorVerify publicKey message adaptorPoint preSignature');
++  print('    ptlc.adaptorComplete preSignature secret');
++  print('    ptlc.adaptorExtract preSignature signature');
++}
++
++Future<void> ptlcFunctions() async {
++  switch (args[0].split('.')[1]) {
++    case 'create':
++      verbose ? print('Description: Create a ptlc') : null;
++      await _create();
++      return;
++
++    case 'unlock':
++      verbose ? print('Description: Unlock an active ptlc to this address') : null;
++      await _unlock();
++      return;
++
++    case 'proxyUnlock':
++      verbose
++          ? print('Description: Unlock an active ptlc to another address')
++          : null;
++      await _proxyUnlock();
++      return;
++
++    case 'reclaim':
++      verbose ? print('Description: Reclaim an expired ptlc') : null;
++      await _reclaim();
++      return;
++
++    case 'get':
++      verbose ? print('Description: Display ptlc details') : null;
++      await _get();
++      return;
++
++    case 'inspect':
++      verbose ? print('Description: Inspect ptlc account-block') : null;
++      await _inspect();
++      return;
++
++    case 'monitor':
++      verbose
++          ? print(
++              'Description: Monitor ptlc by id -- automatically reclaim it or display its witness')
++          : null;
++      await _monitor();
++      return;
++
++    case 'message':
++      verbose ? print('Description: Print the unlock message a key must sign') : null;
++      await _message();
++      return;
++
++    case 'sign':
++      verbose ? print('Description: Sign the unlock message with a secret key') : null;
++      await _sign();
++      return;
++
++    case 'keygen':
++      verbose ? print('Description: Generate a secp256k1 secret and its points') : null;
++      _keygen();
++      return;
++
++    case 'point':
++      verbose ? print('Description: The point of a secret scalar') : null;
++      _point();
++      return;
++
++    case 'tweak':
++      verbose ? print('Description: Add a tweak to a point') : null;
++      _tweak();
++      return;
++
++    case 'tweakSecret':
++      verbose ? print('Description: Add a tweak to a secret scalar') : null;
++      _tweakSecret();
++      return;
++
++    case 'adaptorSign':
++      verbose ? print('Description: BIP-340 adaptor pre-signature') : null;
++      _adaptorSign();
++      return;
++
++    case 'adaptorVerify':
++      verbose ? print('Description: Verify a BIP-340 adaptor pre-signature') : null;
++      _adaptorVerify();
++      return;
++
++    case 'adaptorComplete':
++      verbose ? print('Description: Complete a pre-signature with the secret') : null;
++      _adaptorComplete();
++      return;
++
++    case 'adaptorExtract':
++      verbose ? print('Description: Extract the secret from a completed signature') : null;
++      _adaptorExtract();
++      return;
++
++    default:
++      invalidCommand();
++  }
++}
++
++// ---- helpers -------------------------------------------------------------
++
++List<int> _hex(String s, String what, [int? length]) {
++  final clean = s.startsWith('0x') ? s.substring(2) : s;
++  List<int> bytes;
++  try {
++    bytes = hex.decode(clean);
++  } catch (e) {
++    print('${red('Error!')} $what is not valid hex');
++    exit(-1);
++  }
++  if (length != null && bytes.length != length) {
++    print('${red('Error!')} $what must be $length bytes, got ${bytes.length}');
++    exit(-1);
++  }
++  return bytes;
++}
++
++BigInt _scalar(String s, String what) {
++  final t = Secp256k1.parseScalar(_hex(s, what, 32));
++  if (t == null) {
++    print('${red('Error!')} $what is not a canonical secp256k1 scalar');
++    exit(-1);
++  }
++  return t;
++}
++
++List<int> _randomBytes(int n) {
++  final r = Random.secure();
++  return List<int>.generate(n, (_) => r.nextInt(256));
++}
++
++String _h(List<int> b) => hex.encode(b);
++
++String _format(Duration d) => d.toString().split('.').first.padLeft(8, '0');
++
++Future<PtlcInfo> _getById(Hash id) async {
++  try {
++    return await znnClient.embedded.ptlc.getById(id);
++  } catch (e) {
++    print('${red('Error!')} The ptlc id $id does not exist');
++    exit(-1);
++  }
++}
++
++Future<int> _chainIdentifier() async =>
++    (await znnClient.ledger.getFrontierMomentum()).chainIdentifier;
++
++/// Whether the entry's point lock is this wallet's own key, in which case the
++/// wallet can produce the witness itself.
++Future<bool> _lockIsOurKey(PtlcInfo ptlc) async {
++  if (ptlc.pointType != PtlcPointType.ed25519) return false;
++  final ours = await znnClient.defaultKeyPair!.getPublicKey();
++  return const ListEquality().equals(ours, ptlc.pointLock);
++}
++
++// ---- contract calls ------------------------------------------------------
++
++Future<void> _create() async {
++  if (args.length < 6 || args.length > 7) {
++    print('Incorrect number of arguments. Expected:');
++    print(
++        'ptlc.create tokenStandard amount expirationTime (in hours) pointType pointLock [destination]');
++    print('Point types:');
++    print('  0: ED25519 key (32 bytes). Opened by a signature over the unlock message');
++    print('  1: BIP-340 key (32 bytes, x-only). Opened by a Schnorr signature over the unlock message');
++    print(
++        '  2: secp256k1 point (33 bytes, compressed). Opened by its scalar; destination is required');
++    return;
++  }
++
++  TokenStandard tokenStandard = getTokenStandard(args[1]);
++  Token token = await getToken(tokenStandard);
++  BigInt amount = AmountUtils.extractDecimals(args[2], token.decimals);
++  Function color = getColor(tokenStandard);
++
++  if (amount <= BigInt.zero) {
++    print('${red('Error!')} amount must be greater than 0');
++    return;
++  }
++  if (!await hasBalance(address, tokenStandard, amount)) {
++    return;
++  }
++
++  int expirationTime;
++  try {
++    expirationTime = int.parse(args[3]);
++  } catch (e) {
++    print('${red('Error!')} expirationTime must be an integer.');
++    return;
++  }
++  const minHours = 1;
++  const maxHours = 24 * 7;
++  if (expirationTime < minHours || expirationTime > maxHours) {
++    print(
++        '${red('Error!')} expirationTime (hours) must be at least $minHours and at most $maxHours.');
++    return;
++  }
++
++  int pointType;
++  try {
++    pointType = int.parse(args[4]);
++  } catch (e) {
++    print('${red('Error!')} point type must be an integer.');
++    return;
++  }
++  final lockSize = PtlcPointType.lockSizes[pointType];
++  if (lockSize == null) {
++    print('${red('Error!')} unknown point type $pointType');
++    return;
++  }
++  final pointLock = _hex(args[5], 'pointLock', lockSize);
++  if (pointType == PtlcPointType.secp256k1Point &&
++      Secp256k1.parseCompressed(pointLock) == null) {
++    print('${red('Error!')} pointLock is not a compressed secp256k1 point');
++    return;
++  }
++  if (pointType == PtlcPointType.bip340 && Secp256k1.liftX(pointLock) == null) {
++    print('${red('Error!')} pointLock is not a BIP-340 x-only key');
++    return;
++  }
++
++  Address destination = emptyAddress;
++  if (args.length == 7) {
++    destination = parseAddress(args[6]);
++    if (!assertUserAddress(destination)) {
++      return;
++    }
++  } else if (pointType == PtlcPointType.secp256k1Point) {
++    print(
++        '${red('Error!')} a point lock needs a destination: its scalar is a bearer secret');
++    return;
++  }
++
++  final duration = Duration(hours: expirationTime);
++  final frontier = await znnClient.ledger.getFrontierMomentum();
++  final expiresAt = frontier.timestamp + duration.inSeconds;
++
++  print(
++      'Creating ptlc with amount ${AmountUtils.addDecimals(amount, token.decimals)} ${color(token.symbol)}');
++  print('  Point type ${PtlcPointType.name(pointType)}, lock ${green(_h(pointLock))}');
++  print(destination == emptyAddress
++      ? '  Can be unlocked to any destination the witness names'
++      : '  Can be unlocked only to $destination');
++  print('  Can be reclaimed in ${_format(duration)} by $address');
++
++  AccountBlockTemplate block = await send(znnClient.embedded.ptlc
++      .create(token, amount, expiresAt, pointType, pointLock, destination));
++
++  print('Submitted ptlc with id ${green(block.hash.toString())}');
++  print('Done');
++}
++
++Future<void> _unlock() async {
++  if (args.length < 2 || args.length > 3) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.unlock id [witness]');
++    print(
++        'witness: the signature over the unlock message for a key type, the scalar for a point type.');
++    print('Omitted, the wallet signs with its own key when the lock is that key.');
++    return;
++  }
++
++  Hash id = parseHash(args[1]);
++  PtlcInfo ptlc = await _getById(id);
++  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
++
++  if (ptlc.expirationTime <= now) {
++    print('${red('Error!')} Cannot unlock ptlc. Time lock expired');
++    return;
++  }
++  if (ptlc.hasFixedDestination && ptlc.destination != address) {
++    print(
++        '${red('Error!')} Cannot unlock ptlc to $address. It pays only ${ptlc.destination}');
++    return;
++  }
++
++  List<int> witness;
++  if (args.length == 3) {
++    witness = _hex(args[2], 'witness', PtlcPointType.witnessSizes[ptlc.pointType]);
++  } else if (await _lockIsOurKey(ptlc)) {
++    final message = PtlcApi.unlockMessage(
++        await _chainIdentifier(), ptlc.pointType, id, address);
++    witness = await znnClient.defaultKeyPair!.sign(message);
++    print('Signed the unlock message with this wallet\'s key');
++  } else {
++    print('${red('Error!')} the lock is not this wallet\'s key; a witness is needed');
++    return;
++  }
++
++  if (!await _checkWitness(ptlc, id, address, witness)) {
++    return;
++  }
++
++  Token token = await getToken(ptlc.tokenStandard);
++  Function color = getColor(ptlc.tokenStandard);
++  print(
++      'Unlocking ptlc id ${ptlc.id} with amount ${AmountUtils.addDecimals(ptlc.amount, token.decimals)} ${color(token.symbol)}');
++  await send(znnClient.embedded.ptlc.unlock(id, witness));
++  print('Done');
++  print(
++      'Use ${green('receiveAll')} to collect your ptlc amount after 2 momentums');
++}
++
++Future<void> _proxyUnlock() async {
++  if (args.length != 4) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.proxyUnlock id destination witness');
++    return;
++  }
++
++  Hash id = parseHash(args[1]);
++  Address destination = parseAddress(args[2]);
++  PtlcInfo ptlc = await _getById(id);
++  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
++
++  if (ptlc.expirationTime <= now) {
++    print('${red('Error!')} Cannot unlock ptlc. Time lock expired');
++    return;
++  }
++  if (ptlc.hasFixedDestination && ptlc.destination != destination) {
++    print(
++        '${red('Error!')} Cannot unlock ptlc to $destination. It pays only ${ptlc.destination}');
++    return;
++  }
++  final witness = _hex(args[3], 'witness', PtlcPointType.witnessSizes[ptlc.pointType]);
++  if (!await _checkWitness(ptlc, id, destination, witness)) {
++    return;
++  }
++
++  Token token = await getToken(ptlc.tokenStandard);
++  Function color = getColor(ptlc.tokenStandard);
++  print(
++      'Unlocking ptlc id ${ptlc.id} with amount ${AmountUtils.addDecimals(ptlc.amount, token.decimals)} ${color(token.symbol)} to $destination');
++  await send(znnClient.embedded.ptlc.proxyUnlock(id, destination, witness));
++  print('Done');
++}
++
++/// Checks a witness locally before spending plasma on a call the contract
++/// would refuse.
++Future<bool> _checkWitness(
++    PtlcInfo ptlc, Hash id, Address destination, List<int> witness) async {
++  switch (ptlc.pointType) {
++    case PtlcPointType.ed25519:
++      final message = PtlcApi.unlockMessage(
++          await _chainIdentifier(), ptlc.pointType, id, destination);
++      if (!await Crypto.verify(witness, message, ptlc.pointLock)) {
++        print('${red('Error!')} the signature does not verify for this entry and destination');
++        return false;
++      }
++      return true;
++    case PtlcPointType.bip340:
++      final message = PtlcApi.unlockMessage(
++          await _chainIdentifier(), ptlc.pointType, id, destination);
++      if (!Bip340.verify(ptlc.pointLock, message, witness)) {
++        print('${red('Error!')} the signature does not verify for this entry and destination');
++        return false;
++      }
++      return true;
++    case PtlcPointType.secp256k1Point:
++      final t = Secp256k1.parseScalar(witness);
++      if (t == null ||
++          !const ListEquality().equals(Secp256k1.scalarToPoint(t), ptlc.pointLock)) {
++        print('${red('Error!')} the scalar is not the one behind this entry\'s point');
++        return false;
++      }
++      return true;
++    default:
++      print('${red('Error!')} unknown point type ${ptlc.pointType}');
++      return false;
++  }
++}
++
++Future<void> _reclaim() async {
++  if (args.length != 2) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.reclaim id');
++    return;
++  }
++
++  Hash id = parseHash(args[1]);
++  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
++  PtlcInfo ptlc = await _getById(id);
++
++  if (ptlc.expirationTime > now) {
++    print(
++        '${red('Error!')} Cannot reclaim ptlc. Try again in ${_format(Duration(seconds: ptlc.expirationTime - now))}.');
++    return;
++  }
++  if (ptlc.timeLocked != address) {
++    print('${red('Error!')} Cannot reclaim ptlc. Permission denied');
++    return;
++  }
++
++  Token token = await getToken(ptlc.tokenStandard);
++  Function color = getColor(ptlc.tokenStandard);
++  print(
++      'Reclaiming ptlc id ${ptlc.id} with amount ${AmountUtils.addDecimals(ptlc.amount, token.decimals)} ${color(token.symbol)}');
++  await send(znnClient.embedded.ptlc.reclaim(id));
++  print('Done');
++  print(
++      'Use ${green('receiveAll')} to collect your ptlc amount after 2 momentums');
++}
++
++Future<void> _get() async {
++  if (args.length != 2) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.get id');
++    return;
++  }
++
++  Hash id = parseHash(args[1]);
++  PtlcInfo ptlc = await _getById(id);
++  _printInfo(ptlc);
++  print('Done');
++}
++
++void _printInfo(PtlcInfo ptlc) {
++  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
++  print('Ptlc id ${ptlc.id} with amount ${ptlc.amount} ${ptlc.tokenStandard}');
++  print('   Point type ${PtlcPointType.name(ptlc.pointType)}, lock ${_h(ptlc.pointLock)}');
++  if (ptlc.expirationTime > now) {
++    print(ptlc.hasFixedDestination
++        ? '   Can be unlocked to ${ptlc.destination} with the point\'s witness'
++        : '   Can be unlocked to any destination the witness names');
++    print(
++        '   Can be reclaimed in ${_format(Duration(seconds: ptlc.expirationTime - now))} by ${ptlc.timeLocked}');
++  } else {
++    print('   Can be reclaimed now by ${ptlc.timeLocked}');
++  }
++}
++
++Future<void> _inspect() async {
++  if (args.length != 2) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.inspect blockHash');
++    return;
++  }
++
++  Hash blockHash = parseHash(args[1]);
++  var block = await znnClient.ledger.getAccountBlockByHash(blockHash);
++  if (block == null) {
++    print('The account block ${blockHash.toString()} does not exist');
++    return;
++  }
++  if (block.pairedAccountBlock == null ||
++      block.blockType != BlockTypeEnum.userSend.index) {
++    print('The account block was not sent by a user');
++    return;
++  }
++
++  Function eq = const ListEquality().equals;
++  AbiFunction? f;
++  for (var entry in Definitions.ptlc.entries) {
++    if (eq(AbiFunction.extractSignature(entry.encodeSignature()),
++        AbiFunction.extractSignature(block.data))) {
++      f = AbiFunction(entry.name!, entry.inputs!);
++    }
++  }
++  if (f == null) {
++    print('The account block contains invalid data');
++    return;
++  }
++
++  var txArgs = f.decode(block.data);
++  switch (f.name.toString()) {
++    case 'Unlock':
++      print(
++          'Unlock ptlc: id ${cyan(txArgs[0].toString())} unlocked by ${block.address} with witness: ${green(_h(txArgs[1]))}');
++      break;
++    case 'ProxyUnlock':
++      print(
++          'ProxyUnlock ptlc: id ${cyan(txArgs[0].toString())} unlocked by ${block.address} to ${txArgs[1]} with witness: ${green(_h(txArgs[2]))}');
++      break;
++    case 'Reclaim':
++      print(
++          'Reclaim ptlc: id ${red(txArgs[0].toString())} reclaimed by ${block.address}');
++      break;
++    case 'Create':
++      print('Create ptlc: ${AmountUtils.addDecimals(block.amount, block.token!.decimals)} '
++          '${block.token!.symbol} expiring ${txArgs[0]} '
++          'point type ${txArgs[1]} lock ${_h(txArgs[2])} '
++          'destination ${txArgs[3]} created by ${block.address}');
++      break;
++    default:
++      print('The account block contains an unknown function call');
++  }
++}
++
++/// Watches an entry: reclaims it for its creator once it expires, or prints
++/// the witness that opened it, which for a point lock is the swap secret.
++Future<void> _monitor() async {
++  if (args.length != 2) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.monitor id');
++    return;
++  }
++
++  Hash id = parseHash(args[1]);
++  PtlcInfo ptlc = await _getById(id);
++  _printInfo(ptlc);
++  print('Monitoring ptlc id ${ptlc.id}');
++
++  final contractHeight = (await znnClient.ledger.getFrontierAccountBlock(ptlcAddress))?.height ?? 0;
++  var lastHeight = contractHeight;
++
++  while (true) {
++    await Future.delayed(const Duration(seconds: 10));
++    final frontier = await znnClient.ledger.getFrontierMomentum();
++
++    // the entry is gone: find the block that took it
++    try {
++      await znnClient.embedded.ptlc.getById(id);
++    } catch (_) {
++      final head = (await znnClient.ledger.getFrontierAccountBlock(ptlcAddress))?.height ?? 0;
++      for (var h = lastHeight + 1; h <= head; h++) {
++        final blocks = await znnClient.ledger.getAccountBlocksByHeight(ptlcAddress, h, 1);
++        for (final b in blocks.list ?? []) {
++          final paired = b.pairedAccountBlock;
++          if (paired == null) continue;
++          AbiFunction? f;
++          for (var entry in Definitions.ptlc.entries) {
++            if (const ListEquality().equals(
++                AbiFunction.extractSignature(entry.encodeSignature()),
++                AbiFunction.extractSignature(paired.data))) {
++              f = AbiFunction(entry.name!, entry.inputs!);
++            }
++          }
++          if (f == null) continue;
++          final txArgs = f.decode(paired.data);
++          if (txArgs[0].toString() != id.toString()) continue;
++          if (f.name == 'Unlock') {
++            print('Ptlc was unlocked by ${paired.address}; witness ${green(_h(txArgs[1]))}');
++          } else if (f.name == 'ProxyUnlock') {
++            print(
++                'Ptlc was unlocked to ${txArgs[1]} by ${paired.address}; witness ${green(_h(txArgs[2]))}');
++          } else if (f.name == 'Reclaim') {
++            print('Ptlc was reclaimed by ${paired.address}');
++          }
++          print('Done');
++          return;
++        }
++      }
++      lastHeight = head;
++      print('Ptlc entry is gone; the block that took it was not found yet');
++      continue;
++    }
++
++    if (frontier.timestamp >= ptlc.expirationTime && ptlc.timeLocked == address) {
++      print('Ptlc expired; reclaiming');
++      await send(znnClient.embedded.ptlc.reclaim(id));
++      print('Done');
++      return;
++    }
++  }
++}
++
++// ---- messages and keys ---------------------------------------------------
++
++Future<void> _message() async {
++  if (args.length != 4) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.message id destination pointType');
++    return;
++  }
++  final id = parseHash(args[1]);
++  final destination = parseAddress(args[2]);
++  final pointType = int.parse(args[3]);
++  final chain = await _chainIdentifier();
++  print('Chain identifier: $chain');
++  print('Unlock message: ${green(_h(PtlcApi.unlockMessage(chain, pointType, id, destination)))}');
++}
++
++Future<void> _sign() async {
++  if (args.length < 4 || args.length > 5) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.sign id destination secretKey [pointType]');
++    print('pointType 0 signs with ED25519 (secretKey is the 32-byte seed), 1 with BIP-340 (default)');
++    return;
++  }
++  final id = parseHash(args[1]);
++  final destination = parseAddress(args[2]);
++  final secret = _hex(args[3], 'secretKey', 32);
++  final pointType = args.length == 5 ? int.parse(args[4]) : PtlcPointType.bip340;
++  final message = PtlcApi.unlockMessage(await _chainIdentifier(), pointType, id, destination);
++  List<int> signature;
++  List<int> publicKey;
++  if (pointType == PtlcPointType.ed25519) {
++    publicKey = await Crypto.getPublicKey(secret);
++    signature = await Crypto.sign(message, secret, publicKey);
++  } else if (pointType == PtlcPointType.bip340) {
++    publicKey = Bip340.publicKey(secret);
++    signature = Bip340.sign(secret, message, _randomBytes(32));
++  } else {
++    print('${red('Error!')} a point lock is opened by its scalar, not a signature');
++    return;
++  }
++  print('Point lock: ${_h(publicKey)}');
++  print('Witness: ${green(_h(signature))}');
++}
++
++void _keygen() {
++  final secret = _randomBytes(32);
++  final t = Secp256k1.parseScalar(secret);
++  if (t == null) {
++    _keygen();
++    return;
++  }
++  print('Secret: ${green(_h(secret))}');
++  print('Point (compressed, pointType 2): ${_h(Secp256k1.scalarToPoint(t))}');
++  print('Key (x-only, pointType 1): ${_h(Bip340.publicKey(secret))}');
++}
++
++void _point() {
++  if (args.length != 2) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.point secret');
++    return;
++  }
++  final t = _scalar(args[1], 'secret');
++  final secret = Secp256k1.scalarToBytes(t);
++  print('Point (compressed, pointType 2): ${_h(Secp256k1.scalarToPoint(t))}');
++  print('Key (x-only, pointType 1): ${_h(Bip340.publicKey(secret))}');
++}
++
++void _tweak() {
++  if (args.length != 3) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.tweak point tweak');
++    return;
++  }
++  final point = _hex(args[1], 'point', 33);
++  final d = _scalar(args[2], 'tweak');
++  print('Tweaked point: ${_h(Secp256k1.tweakPoint(point, d))}');
++}
++
++void _tweakSecret() {
++  if (args.length != 3) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.tweakSecret secret tweak');
++    return;
++  }
++  final t = _scalar(args[1], 'secret');
++  final d = _scalar(args[2], 'tweak');
++  final t2 = Secp256k1.tweakScalar(t, d);
++  print('Tweaked secret: ${green(_h(Secp256k1.scalarToBytes(t2)))}');
++  print('Its point: ${_h(Secp256k1.scalarToPoint(t2))}');
++}
++
++// ---- adaptor signatures --------------------------------------------------
++
++void _adaptorSign() {
++  if (args.length != 4) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.adaptorSign secretKey message adaptorPoint');
++    return;
++  }
++  final secret = _hex(args[1], 'secretKey', 32);
++  final message = _hex(args[2], 'message');
++  final adaptor = _hex(args[3], 'adaptorPoint', 33);
++  final presig = Bip340.adaptorSign(secret, message, adaptor, _randomBytes(32));
++  print('Public key: ${_h(Bip340.publicKey(secret))}');
++  print('Pre-signature: ${green(_h(presig))}');
++}
++
++void _adaptorVerify() {
++  if (args.length != 5) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.adaptorVerify publicKey message adaptorPoint preSignature');
++    return;
++  }
++  final ok = Bip340.adaptorVerify(_hex(args[1], 'publicKey', 32),
++      _hex(args[2], 'message'), _hex(args[3], 'adaptorPoint', 33), _hex(args[4], 'preSignature', 65));
++  print(ok ? green('valid') : red('invalid'));
++  if (!ok) exit(-1);
++}
++
++void _adaptorComplete() {
++  if (args.length != 3) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.adaptorComplete preSignature secret');
++    return;
++  }
++  final presig = _hex(args[1], 'preSignature', 65);
++  final t = _scalar(args[2], 'secret');
++  print('Signature: ${green(_h(Bip340.adaptorComplete(presig, t)))}');
++}
++
++void _adaptorExtract() {
++  if (args.length != 3) {
++    print('Incorrect number of arguments. Expected:');
++    print('ptlc.adaptorExtract preSignature signature');
++    return;
++  }
++  final presig = _hex(args[1], 'preSignature', 65);
++  final sig = _hex(args[2], 'signature', 64);
++  final t = Bip340.adaptorExtract(presig, sig);
++  print('Secret: ${green(_h(Secp256k1.scalarToBytes(t)))}');
++  print('Its point: ${_h(Secp256k1.scalarToPoint(t))}');
++}
+diff --git a/lib/utils/args.dart b/lib/utils/args.dart
+index cbf8b52..fde1f1a 100644
+--- a/lib/utils/args.dart
++++ b/lib/utils/args.dart
+@@ -108,6 +108,9 @@ void handleHelp() {
+     case 'htlc':
+       htlcMenu();
+       exit(0);
++    case 'ptlc':
++      ptlcMenu();
++      exit(0);
+     case 'bridge':
+       bridgeMenu();
+       exit(0);
+@@ -152,6 +155,8 @@ Future<void> handleCli() async {
+       await sporkFunctions();
+     } else if (command[0].contains('htlc')) {
+       await htlcFunctions();
++    } else if (command[0].contains('ptlc')) {
++      await ptlcFunctions();
+     } else if (command[0].contains('bridge')) {
+       await bridgeFunctions();
+     } else if (command[0].contains('liquidity')) {
+@@ -185,6 +190,7 @@ void fullMenu() {
+   acceleratorMenu();
+   sporkMenu();
+   htlcMenu();
++  ptlcMenu();
+   bridgeMenu();
+   liquidityMenu();
+   orchestratorMenu();
+diff --git a/lib/wallet.dart b/lib/wallet.dart
+index 89bb6b3..e0740b6 100644
+--- a/lib/wallet.dart
++++ b/lib/wallet.dart
+@@ -1,6 +1,5 @@
+ import 'dart:io';
+ 
+-import 'package:bip39/bip39.dart' as bip39;
+ import 'package:dcli/dcli.dart' hide verbose;
+ import 'package:znn_cli_dart/lib.dart';
+ import 'package:znn_sdk_dart/znn_sdk_dart.dart';
+@@ -90,7 +89,7 @@ Future<void> _createFromMnemonic() async {
+         'wallet.createFromMnemonic "${green('mnemonic')}" passphrase [keyStoreName]');
+     return;
+   }
+-  if (!bip39.validateMnemonic(args[1])) {
++  if (!Mnemonic.validateMnemonic(args[1].split(' '))) {
+     throw AskValidatorException(red('Invalid mnemonic'));
+   }
+ 
+diff --git a/pubspec.lock b/pubspec.lock
+index d3a6907..0ce52bb 100644
+--- a/pubspec.lock
++++ b/pubspec.lock
+@@ -61,26 +61,26 @@ packages:
+     dependency: transitive
+     description:
+       name: big_decimal
+-      sha256: "301158ec5a646d1e1a0ca7a97fbfab7be18a8df700adb7f7cb9c4149e75c8f0c"
++      sha256: "6413818091e80c907bb73bae383418db5c148fd7fd283e56197bfeeeb212d5bd"
+       url: "https://pub.dev"
+     source: hosted
+-    version: "0.5.0"
+-  bip32:
++    version: "0.7.0"
++  bip32_plus:
+     dependency: transitive
+     description:
+-      name: bip32
+-      sha256: "54787cd7a111e9d37394aabbf53d1fc5e2e0e0af2cd01c459147a97c0e3f8a97"
++      name: bip32_plus
++      sha256: e5ff21f3bd2f4fa063db1f851f0d7a736d46d2e81617f0613ab3f6d17b26608e
+       url: "https://pub.dev"
+     source: hosted
+-    version: "2.0.0"
+-  bip39:
+-    dependency: "direct main"
++    version: "1.0.0"
++  bip39_mnemonic:
++    dependency: transitive
+     description:
+-      name: bip39
+-      sha256: de1ee27ebe7d96b84bb3a04a4132a0a3007dcdd5ad27dd14aa87a29d97c45edc
++      name: bip39_mnemonic
++      sha256: "0fe4ac6c9f2e5b3fb65783371c806007acbcfb66590f4121f577adf5e4523f96"
+       url: "https://pub.dev"
+     source: hosted
+-    version: "1.0.6"
++    version: "4.1.0"
+   boolean_selector:
+     dependency: transitive
+     description:
+@@ -229,10 +229,10 @@ packages:
+     dependency: transitive
+     description:
+       name: ffi
+-      sha256: "493f37e7df1804778ff3a53bd691d8692ddf69702cf4c1c1096a2e41b4779e21"
++      sha256: "6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45"
+       url: "https://pub.dev"
+     source: hosted
+-    version: "2.1.2"
++    version: "2.2.0"
+   file:
+     dependency: transitive
+     description:
+@@ -365,10 +365,10 @@ packages:
+     dependency: transitive
+     description:
+       name: json_rpc_2
+-      sha256: "5e469bffa23899edacb7b22787780068d650b106a21c76db3c49218ab7ca447e"
++      sha256: "82dfd37d3b2e5030ae4729e1d7f5538cbc45eb1c73d618b9272931facac3bec1"
+       url: "https://pub.dev"
+     source: hosted
+-    version: "3.0.2"
++    version: "4.1.0"
+   lints:
+     dependency: "direct dev"
+     description:
+@@ -453,10 +453,10 @@ packages:
+     dependency: transitive
+     description:
+       name: pointycastle
+-      sha256: "4be0097fcf3fd3e8449e53730c631200ebc7b88016acecab2b0da2f0149222fe"
++      sha256: "92aa3841d083cc4b0f4709b5c74fd6409a3e6ba833ffc7dc6a8fee096366acf5"
+       url: "https://pub.dev"
+     source: hosted
+-    version: "3.9.1"
++    version: "4.0.0"
+   pool:
+     dependency: transitive
+     description:
+@@ -697,6 +697,14 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "0.3.1"
++  unorm_dart:
++    dependency: transitive
++    description:
++      name: unorm_dart
++      sha256: b4f4d2aff27d65a5fc37f400d4c09e55d7535359315acbe3b895a9add4de3a23
++      url: "https://pub.dev"
++    source: hosted
++    version: "0.3.3"
+   uuid:
+     dependency: transitive
+     description:
+@@ -737,14 +745,22 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "0.5.1"
++  web_socket:
++    dependency: transitive
++    description:
++      name: web_socket
++      sha256: "34d64019aa8e36bf9842ac014bb5d2f5586ca73df5e4d9bf5c936975cae6982c"
++      url: "https://pub.dev"
++    source: hosted
++    version: "1.0.1"
+   web_socket_channel:
+     dependency: transitive
+     description:
+       name: web_socket_channel
+-      sha256: "58c6666b342a38816b2e7e50ed0f1e261959630becd4c879c4f26bfa14aa5a42"
++      sha256: d645757fb0f4773d602444000a8131ff5d48c9e47adfe9772652dd1a4f2d45c8
+       url: "https://pub.dev"
+     source: hosted
+-    version: "2.4.5"
++    version: "3.0.3"
+   webkit_inspection_protocol:
+     dependency: transitive
+     description:
+@@ -754,13 +770,13 @@ packages:
+     source: hosted
+     version: "1.2.1"
+   win32:
+-    dependency: transitive
++    dependency: "direct overridden"
+     description:
+       name: win32
+-      sha256: "0eaf06e3446824099858367950a813472af675116bf63f008a4c2a75ae13e9cb"
++      sha256: d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e
+       url: "https://pub.dev"
+     source: hosted
+-    version: "5.5.0"
++    version: "5.15.0"
+   yaml:
+     dependency: transitive
+     description:
+@@ -781,11 +797,9 @@ packages:
+   znn_sdk_dart:
+     dependency: "direct main"
+     description:
+-      path: "."
+-      ref: "v0.0.7"
+-      resolved-ref: "8511f17a0dfa721e8f0ec2e0b0aae409f509e102"
+-      url: "https://github.com/zenon-network/znn_sdk_dart.git"
+-    source: git
+-    version: "0.0.7"
++      path: "../znn_sdk_dart-ptlc"
++      relative: true
++    source: path
++    version: "1.0.0"
+ sdks:
+-  dart: ">=3.3.0 <4.0.0"
++  dart: ">=3.7.0 <4.0.0"
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 7a1e0c9..ce6b4a3 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -1,26 +1,34 @@
+-name: znn_cli_dart
+-description: Zenon CLI tool
+-version: 0.0.8
+-publish_to: none
++name: znn_cli_dart
++description: Zenon CLI tool
++version: 0.0.8
++publish_to: none
++
++environment:
++  sdk: '>=3.3.0 <4.0.0'
++
++dependencies:
++  args: ^2.4.2
++  dcli: ^4.0.4
++  znn_sdk_dart:
++    git:
++      url: https://github.com/zenon-network/znn_sdk_dart.git
++      ref: v0.0.7
++  znn_ledger_dart:
++    git:
++      url: https://github.com/zenon-network/znn_ledger_dart.git
++      ref: v0.0.5
++  convert: ^3.1.1
++  collection: ^1.18.0
++      
++dev_dependencies:
++  test: ^1.24.4
++  lints: ^2.1.1
+ 
+-environment:
+-  sdk: '>=3.3.0 <4.0.0'
+-
+-dependencies:
+-  args: ^2.4.2
+-  dcli: ^4.0.4
++# win32 5.5.0 (pulled in transitively via dcli) uses dart:typed_data's
++# UnmodifiableUint8ListView, removed from newer Dart SDKs; pin a 5.x that
++# does not. The SDK override points at the ptlc worktree of znn_sdk_dart,
++# which carries the ptlc API this branch needs.
++dependency_overrides:
++  win32: ^5.15.0
+   znn_sdk_dart:
+-    git:
+-      url: https://github.com/zenon-network/znn_sdk_dart.git
+-      ref: v0.0.7
+-  znn_ledger_dart:
+-    git:
+-      url: https://github.com/zenon-network/znn_ledger_dart.git
+-      ref: v0.0.5
+-  bip39: ^1.0.6
+-  convert: ^3.1.1
+-  collection: ^1.18.0
+-      
+-dev_dependencies:
+-  test: ^1.24.4
+-  lints: ^2.1.1
++    path: ../znn_sdk_dart-ptlc
+-- 
+2.53.0.windows.2
+

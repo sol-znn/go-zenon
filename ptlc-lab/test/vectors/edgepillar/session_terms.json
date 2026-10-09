@@ -1,0 +1,83 @@
+{
+  "schema": "ptlc-offline-session-fixture-v1",
+  "note": "Public synthetic context only. Bitcoin fields come from the qualified transaction fixture; Zenon message/key come from completed_signatures.json. Compressed public points were derived using the pinned musig2 library from the public synthetic test inputs. Network/genesis, participant identifiers, Zenon amount/token/owner/expiry, and observation policy are fictional. Hashing authenticates no participant and verifies no chain or cryptographic artifact.",
+  "terms": {
+    "schema": "ptlc-session-terms-v1",
+    "construction": "CANDIDATE-01",
+    "session_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "alice_id_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "bob_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+    "bitcoin_network": {
+      "label": "offline-bitcoin",
+      "genesis_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "zenon_network": {
+      "label": "offline-zenon",
+      "genesis_hash_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+      "chain_id": 1
+    },
+    "adaptor_point_sec1_hex": "02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+    "bitcoin": {
+      "value_sats": 200000,
+      "claim_output_value_sats": 199000,
+      "claim_destination_script_pubkey_hex": "51202b07498923bde6b9779fde46f5308dec34f464f01929af5b66be30fc3e0b3011",
+      "refund_destination_script_pubkey_hex": "5120483a336466d31e2be85892931ec6613ca19f9a6762329698b4c3e7151c01122b",
+      "funding_script_pubkey_hex": "512004812b3a096ac30b5c6beb21812ec7a5504abf47199e0c7f00b3708808061c5a",
+      "signer_keys_sec1_hex": [
+        "031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+        "024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+      ],
+      "internal_key_xonly_hex": "1fc559d9c96c5953895d3150e64ebf3dd696a0b08e758650b48ff6251d7e60d1",
+      "output_key_xonly_hex": "04812b3a096ac30b5c6beb21812ec7a5504abf47199e0c7f00b3708808061c5a",
+      "refund_key_xonly_hex": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+      "refund_leaf_script_hex": "046465cd1db1752056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac",
+      "tapleaf_hash_hex": "bcd59f19efaf595770b8f19d42c62c193591a86d2dfc039e5fdc6501af935f10",
+      "refund_locktime": 500000100,
+      "sighash_type": "DEFAULT"
+    },
+    "zenon": {
+      "amount_base_units": 100000000,
+      "token_standard_hex": "00000000000000000001",
+      "destination_hex": "000102030405060708090a0b0c0d0e0f10111213",
+      "refund_owner_hex": "6666666666666666666666666666666666666666",
+      "expiry": 500000050,
+      "signer_keys_sec1_hex": [
+        "02531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+        "03462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b"
+      ],
+      "aggregate_key_xonly_hex": "b6968afcd8cca764d730f334c0b1652ee6d8cc090d400157a94f68966792a2e3",
+      "point_type": 1,
+      "message_rule": "SHA3-256(entry_id32 || destination20)"
+    },
+    "policy": {
+      "bitcoin_confirmations": 1,
+      "zenon_confirmations": 1,
+      "minimum_claim_margin_seconds": 30
+    }
+  },
+  "bitcoin_binding": {
+    "funding_txid_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "funding_vout": 1,
+    "value_sats": 200000,
+    "script_pubkey_hex": "512004812b3a096ac30b5c6beb21812ec7a5504abf47199e0c7f00b3708808061c5a",
+    "claim_txid_hex": "6ef1a87b8c7741138a096c7ba65aabc398d4fd065b33d844a94fcd24b9ec3756",
+    "claim_sighash_hex": "139aa1aa431a52ae7e461638f81cb1e3395e38c6ef815c5c202fabbcbd23530f",
+    "claim_destination_script_pubkey_hex": "51202b07498923bde6b9779fde46f5308dec34f464f01929af5b66be30fc3e0b3011",
+    "claim_output_value_sats": 199000,
+    "transaction_version": 2,
+    "sequence": 4294967293,
+    "locktime": 0,
+    "sighash_type": "DEFAULT"
+  },
+  "zenon_binding": {
+    "entry_id_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "destination_hex": "000102030405060708090a0b0c0d0e0f10111213",
+    "message_hex": "e357d6597d0149f0adb2ab0f0d7dff932412e2f55fd9b94bb9301c8ccf9df974",
+    "amount_base_units": 100000000,
+    "token_standard_hex": "00000000000000000001",
+    "refund_owner_hex": "6666666666666666666666666666666666666666",
+    "expiry": 500000050,
+    "aggregate_key_xonly_hex": "b6968afcd8cca764d730f334c0b1652ee6d8cc090d400157a94f68966792a2e3",
+    "point_type": 1
+  }
+}

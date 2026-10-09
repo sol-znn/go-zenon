@@ -1,0 +1,38 @@
+From c8566a8e6bdbfdd28975d4f413ae4df2e14b5252 Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Fri, 9 Oct 2026 11:39:49 -0400
+Subject: [PATCH] ptlc: create refuses a destination of the contract type, on
+ the embedded list or off it
+
+assertUserAddress asks the SDK's list of embedded contracts, as the contract
+does. An address whose type byte is the contract's and which is not on the list
+passes both checks, and the VM can no more pay it than a listed one: every
+unlock of such an entry would be refused until its creator reclaims it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/ptlc.dart | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/lib/ptlc.dart b/lib/ptlc.dart
+index 8c8e3ea..cca81c6 100644
+--- a/lib/ptlc.dart
++++ b/lib/ptlc.dart
+@@ -361,6 +361,14 @@ Future<void> _create() async {
+     if (!assertUserAddress(destination)) {
+       return;
+     }
++    // assertUserAddress asks the SDK's list of embedded contracts, as the
++    // contract does. An address of the contract type that is not on the list
++    // passes both, and is paid no more than one that is: every unlock would be
++    // refused until the creator reclaims.
++    if (destination.core![0] != 0) {
++      print('${red('Error!')} $destination is a contract address; an entry that pays it could never be opened');
++      return;
++    }
+   } else if (pointType == PtlcPointType.secp256k1Point) {
+     print(
+         '${red('Error!')} a point lock needs a destination: its scalar is a bearer secret');
+-- 
+2.53.0.windows.2
+

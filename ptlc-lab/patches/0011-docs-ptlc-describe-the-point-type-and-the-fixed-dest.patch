@@ -1,0 +1,115 @@
+From 430fb6debfe52dd4da1fe62828d11ffa40830e83 Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Wed, 7 Oct 2026 23:24:24 -0400
+Subject: [PATCH 11/11] docs/ptlc: describe the point type and the fixed
+ destination
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ docs/ptlc/README.md        | 24 ++++++++++++++++++++----
+ docs/ptlc/RELEASE_NOTES.md |  7 +++++++
+ docs/ptlc/SECURITY.md      | 12 ++++++++++++
+ docs/ptlc/SIGNING.md       |  8 ++++++++
+ 4 files changed, 47 insertions(+), 4 deletions(-)
+
+diff --git a/docs/ptlc/README.md b/docs/ptlc/README.md
+index 8b688b8..9021e53 100644
+--- a/docs/ptlc/README.md
++++ b/docs/ptlc/README.md
+@@ -15,7 +15,7 @@ types.PtlcContract
+ Methods:
+ 
+ ```txt
+-Create(expirationTime, pointType, pointLock)
++Create(expirationTime, pointType, pointLock, destination)
+ Unlock(id, signature)
+ ProxyUnlock(id, destination, signature)
+ Reclaim(id)
+@@ -24,14 +24,30 @@ Reclaim(id)
+ Supported point types:
+ 
+ ```txt
+-PointTypeED25519
+-PointTypeBIP340
++PointTypeED25519        32-byte key,  opened by a 64-byte signature over the unlock message
++PointTypeBIP340         32-byte key,  opened by a 64-byte signature over the unlock message
++PointTypeSecp256k1Point 33-byte compressed point T, opened by the 32-byte scalar t with t*G == T
+ ```
+ 
++The `signature` argument of `Unlock` and `ProxyUnlock` carries the witness: a
++signature for the key types, the scalar for the point type. The point type is the
++lock Lightning's PTLC design describes; this VM can multiply a point, so it offers
++the lock directly instead of through an adaptor signature.
++
++## Destination
++
++`Create` names the only address an unlock may pay. The zero address means any
++address the witness binds, and is allowed for the key types only. A point lock must
++name a destination: its witness is a bare scalar that binds nothing, and anyone who
++read it from the claim's send block could otherwise submit a `ProxyUnlock` to
++themselves first. An entry with a fixed destination refuses every unlock to another
++address with `ErrPermissionDenied`, whoever submits it. An embedded contract is never a
++valid fixed destination.
++
+ ## Lifecycle
+ 
+ 1. A user sends tokens to `types.PtlcContract` with `Create`.
+-2. The contract stores the creating address, token standard, amount, expiration time, point type, and point lock.
++2. The contract stores the creating address, token standard, amount, expiration time, point type, point lock, and destination.
+ 3. Before expiration, a valid signature over the PTLC unlock message releases funds to the signed destination.
+ 4. At or after expiration, only the original locker can reclaim.
+ 5. Unlock and reclaim delete the stored PTLC entry before sending funds.
+diff --git a/docs/ptlc/RELEASE_NOTES.md b/docs/ptlc/RELEASE_NOTES.md
+index 6281764..a989881 100644
+--- a/docs/ptlc/RELEASE_NOTES.md
++++ b/docs/ptlc/RELEASE_NOTES.md
+@@ -13,3 +13,10 @@ Activate sporks in chronological order. `PtlcSpork` assumes the prior HTLC and b
+ ## Signing compatibility
+ 
+ Wallets and SDKs must sign the exact domain-separated message in [Signing](SIGNING.md). Signatures over the old `Hash(id || destination)` format are invalid.
++
++## Point type and destination (zenon-ptlc, 2026-10)
++
++`Create` takes a fourth argument, `destination`, and a third point type,
++`PointTypeSecp256k1Point`, opened by the scalar behind the point. `Create`'s ABI id
++changes to `22cec8ee`; `Unlock`, `ProxyUnlock` and `Reclaim` are unchanged. The RPC
++`getById` returns `amount` as a decimal string and includes `destination`.
+diff --git a/docs/ptlc/SECURITY.md b/docs/ptlc/SECURITY.md
+index 3bb24f5..6f4c016 100644
+--- a/docs/ptlc/SECURITY.md
++++ b/docs/ptlc/SECURITY.md
+@@ -66,3 +66,15 @@ Protocols that rely on adaptor-signature properties must document:
+ ## Dependency review
+ 
+ BIP340 support requires `github.com/btcsuite/btcd/btcec/v2/schnorr`. This dependency is consensus-critical after PTLC activation, so upgrades require dedicated BIP340 vector review. Avoid unrelated dependency upgrades in PTLC changes, and review `go.mod` and `go.sum` separately from contract logic.
++
++## Point locks and the fixed destination
++
++A scalar is a bearer secret. A send block that carries it is public one momentum
++before the contract acts on it, so a point lock without a fixed destination would be
++claimable by whoever reads the scalar first. `Create` therefore refuses a point lock
++with the zero destination, and an unlock of an entry with a fixed destination pays
++only that address. Key locks may use the same restriction; with the zero destination
++the signature's destination binding is the only protection, as before.
++
++The scalar check is one fixed-base scalar multiplication per unlock, charged as
++`EmbeddedWWithdraw` like every other unlock.
+diff --git a/docs/ptlc/SIGNING.md b/docs/ptlc/SIGNING.md
+index 074b8b5..18e3c68 100644
+--- a/docs/ptlc/SIGNING.md
++++ b/docs/ptlc/SIGNING.md
+@@ -64,3 +64,11 @@ signature = Sign(pointLockPrivateKey, PTLCUnlockMessage(chainIdentifier, pointTy
+ ```
+ 
+ A valid signature for destination A cannot unlock funds to destination B.
++
++## Point mode
++
++`PointTypeSecp256k1Point` stores a 33-byte compressed secp256k1 point `T` and expects
++the 32-byte scalar `t` with `t·G = T` as the witness. The scalar must be canonical:
++nonzero and below the group order, so that one secret has exactly one encoding. No
++message is signed; the entry's fixed destination does the binding that the unlock
++message does for the key types.
+-- 
+2.53.0.windows.2
+

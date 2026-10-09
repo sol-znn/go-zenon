@@ -1,0 +1,9 @@
+.git
+**/node_modules
+lab/web/dist
+lab/.syrius
+**/*.exe
+**/*.log
+test-results
+.build
+.env

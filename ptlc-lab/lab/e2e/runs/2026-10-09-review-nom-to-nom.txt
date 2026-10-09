@@ -1,0 +1,169 @@
+# scenarios/nom-to-nom/run.sh in the safe order (D-30), 2026-10-09 (UTC), on the devnet
+#
+# 1. In the lab image (docker compose run --rm nom-to-nom), 15:18:15 to 15:19:04: stopped after
+#    Alice's unlock. The script took the witness out of ptlc.monitor's output with a grep that
+#    did not strip colour codes, and under 'docker compose run' the CLI colours its output.
+#    The swap itself was fine; the script lost the witness. Fixed in run.sh the same minute.
+# 2. On the host, the fixed script and the fixed CLI, 15:19:48 to 15:22:38: passed (below).
+# 3. In the lab image with the fixed script mounted, 15:22:53 to 15:24:22: passed (below).
+#    The image built at 15:24:58 carries that script.
+# 4. In the final image, built 15:41:00 (191142aaf67d), 15:59:03 to 16:00:23: passed (at the end).
+
+## 2. host
+15:20:03 Alice z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+15:20:03 Bob   z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+15:20:03 balances before:
+Balance for account-chain z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d having height 215
+  95520 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  9781 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+Balance for account-chain z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e having height 206
+  500030 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  49820 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+15:20:04 Alice's point T  = 039baf8c0e95ff0bc31fc0110e1134de585a408eb3d95dd25995ee1272bc9bef36
+15:20:04 tweak d (shared off chain) = d92f5c2eb5704385d1b2d20e496ec8466e8fd425459b686ffc35ab3edd0f2ea5
+15:20:04 Bob's point T+dG = 03c7d0262820acf344fd6b0801fd326b672e53a3570d570c5203e854ffe8f404dd
+15:20:04 Alice locks 100 QSR to T+dG for Bob, 2 h
+15:20:10   entry 372797da76591a43deed494065077a2ad46c2afd91aa218746600bc3b1ae8ca7
+Ptlc id 372797da76591a43deed494065077a2ad46c2afd91aa218746600bc3b1ae8ca7 with amount 10000000000 zts1qsrxxxxxxxxxxxxxmrhjll
+   Point type secp256k1 point, lock 03c7d0262820acf344fd6b0801fd326b672e53a3570d570c5203e854ffe8f404dd
+   Can be unlocked to z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e with the point's witness
+   Can be reclaimed in 01:59:30 by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+Done
+15:20:31 Bob locks 10 ZNN to T for Alice, 1 h, ending an hour before hers
+15:20:36   entry 5e2284858831bf939ba46ba288ba042da6c7635d3a6c7bdc3ca565be984a864a
+Ptlc id 5e2284858831bf939ba46ba288ba042da6c7635d3a6c7bdc3ca565be984a864a with amount 1000000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 039baf8c0e95ff0bc31fc0110e1134de585a408eb3d95dd25995ee1272bc9bef36
+   Can be unlocked to z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d with the point's witness
+   Can be reclaimed in 00:59:50 by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+Done
+15:20:42 Alice unlocks Bob's entry with t
+Unlocking ptlc id 5e2284858831bf939ba46ba288ba042da6c7635d3a6c7bdc3ca565be984a864a with amount 10 ZNN
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+Ptlc id 5e2284858831bf939ba46ba288ba042da6c7635d3a6c7bdc3ca565be984a864a with amount 1000000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 039baf8c0e95ff0bc31fc0110e1134de585a408eb3d95dd25995ee1272bc9bef36
+   Can be unlocked to z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d with the point's witness
+   Can be reclaimed in 00:59:50 by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+Monitoring ptlc id 5e2284858831bf939ba46ba288ba042da6c7635d3a6c7bdc3ca565be984a864a
+Ptlc was unlocked by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d; witness 0853c70a0c7187b02974b8c8e4befc17c564eee3b27376e1ec3f96f458443a24
+Done
+15:21:06 Bob read the witness off the chain: 0853c70a0c7187b02974b8c8e4befc17c564eee3b27376e1ec3f96f458443a24
+15:21:07 Bob unlocks Alice's entry with t + d
+Unlocking ptlc id 372797da76591a43deed494065077a2ad46c2afd91aa218746600bc3b1ae8ca7 with amount 100 QSR
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+15:21:33 collecting
+15:22:37 balances after:
+Balance for account-chain z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d having height 229
+  95540 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  9817 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+Balance for account-chain z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e having height 234
+  500260 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  49840 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+15:22:38 done: Alice has Bob's ZNN, Bob has Alice's QSR; the chain shows T and T+dG, t and t+d
+
+## 3. lab image
+15:23:01 Alice z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+15:23:01 Bob   z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+15:23:01 balances before:
+Balance for account-chain z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d having height 229
+  95540 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  9817 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+Balance for account-chain z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e having height 234
+  500260 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  49840 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+15:23:01 Alice's point T  = 03a1d8dfbab1bca2d14c71d19e8df9772eae9cad3135df38e4cb88b1c9178b3f2e
+15:23:01 tweak d (shared off chain) = 3ff2a24c2d27756b0e79ef46e537dd5c9ad41dc179df8dfb411dce17906e9b57
+15:23:01 Bob's point T+dG = 030e54e1da4f24009509e7981e5b60444a0086db812dac4f7f85607638d86599b9
+15:23:01 Alice locks 100 QSR to T+dG for Bob, 2 h
+15:23:03   entry 877c7502b31b8661463d237ae0555da342eb0fb69ae7f93c7b73b3601d72d7f7
+Ptlc id 877c7502b31b8661463d237ae0555da342eb0fb69ae7f93c7b73b3601d72d7f7 with amount 10000000000 zts1qsrxxxxxxxxxxxxxmrhjll
+   Point type secp256k1 point, lock 030e54e1da4f24009509e7981e5b60444a0086db812dac4f7f85607638d86599b9
+   Can be unlocked to z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e with the point's witness
+   Can be reclaimed in 01:59:50 by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+Done
+15:23:13 Bob locks 10 ZNN to T for Alice, 1 h, ending an hour before hers
+15:23:15   entry 2aadfeec2cb6ab7df9df86453660b51fd41534fbbe97f85b8d94fb487e32c0f3
+Ptlc id 2aadfeec2cb6ab7df9df86453660b51fd41534fbbe97f85b8d94fb487e32c0f3 with amount 1000000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 03a1d8dfbab1bca2d14c71d19e8df9772eae9cad3135df38e4cb88b1c9178b3f2e
+   Can be unlocked to z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d with the point's witness
+   Can be reclaimed in 00:59:40 by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+Done
+15:23:30 Alice unlocks Bob's entry with t
+Unlocking ptlc id 2aadfeec2cb6ab7df9df86453660b51fd41534fbbe97f85b8d94fb487e32c0f3 with amount 10 ZNN
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+Ptlc id 2aadfeec2cb6ab7df9df86453660b51fd41534fbbe97f85b8d94fb487e32c0f3 with amount 1000000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 03a1d8dfbab1bca2d14c71d19e8df9772eae9cad3135df38e4cb88b1c9178b3f2e
+   Can be unlocked to z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d with the point's witness
+   Can be reclaimed in 00:59:40 by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+Monitoring ptlc id 2aadfeec2cb6ab7df9df86453660b51fd41534fbbe97f85b8d94fb487e32c0f3
+Ptlc was unlocked by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d; witness 0da0dae633089b0ea7a83f3d8e26202d865cef330af4391a40ec71f35df437cf
+Done
+15:23:41 Bob read the witness off the chain: 0da0dae633089b0ea7a83f3d8e26202d865cef330af4391a40ec71f35df437cf
+15:23:41 Bob unlocks Alice's entry with t + d
+Unlocking ptlc id 877c7502b31b8661463d237ae0555da342eb0fb69ae7f93c7b73b3601d72d7f7 with amount 100 QSR
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+15:24:04 collecting
+15:24:22 balances after:
+Balance for account-chain z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d having height 232
+  95440 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  9827 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+Balance for account-chain z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e having height 236
+  500260 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  49830 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+15:24:22 done: Alice has Bob's ZNN, Bob has Alice's QSR; the chain shows T and T+dG, t and t+d
+
+## 4. the final lab image (191142aaf67d), 15:59:03 to 16:00:23
+15:59:11 Alice z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+15:59:11 Bob   z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+15:59:11 balances before:
+Balance for account-chain z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d having height 260
+  95420 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  9829 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+Balance for account-chain z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e having height 275
+  500380 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  49827 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+15:59:11 Alice's point T  = 03e4065b4c6bbc9d9920cffe12727d9611bbc5b7e96ba9d1d9b18eb228d2d13535
+15:59:11 tweak d (shared off chain) = 1844fba9120a6d64dce5baa71c8bedc78e82240c843085f44485caffb564fec5
+15:59:11 Bob's point T+dG = 02ac66c095e17cd874dbb65a8dac02f22f6f4a97eaa96154aa159af8bddba0a14c
+15:59:11 Alice locks 100 QSR to T+dG for Bob, 2 h
+15:59:13   entry 402a92487c03f1ab33299be29823abc65907743915281146e57a6ea4ca8ee421
+Ptlc id 402a92487c03f1ab33299be29823abc65907743915281146e57a6ea4ca8ee421 with amount 10000000000 zts1qsrxxxxxxxxxxxxxmrhjll
+   Point type secp256k1 point, lock 02ac66c095e17cd874dbb65a8dac02f22f6f4a97eaa96154aa159af8bddba0a14c
+   Can be unlocked to z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e with the point's witness
+   Can be reclaimed in 01:59:50 by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+Done
+15:59:24 Bob locks 10 ZNN to T for Alice, 1 h, ending an hour before hers
+15:59:26   entry 911dff5f339d302ca38181a7fee2e4b344e20ca0976b8e4b6ff9b456dfad0c62
+Ptlc id 911dff5f339d302ca38181a7fee2e4b344e20ca0976b8e4b6ff9b456dfad0c62 with amount 1000000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 03e4065b4c6bbc9d9920cffe12727d9611bbc5b7e96ba9d1d9b18eb228d2d13535
+   Can be unlocked to z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d with the point's witness
+   Can be reclaimed in 00:59:40 by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+Done
+15:59:41 Alice unlocks Bob's entry with t
+Unlocking ptlc id 911dff5f339d302ca38181a7fee2e4b344e20ca0976b8e4b6ff9b456dfad0c62 with amount 10 ZNN
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+Ptlc id 911dff5f339d302ca38181a7fee2e4b344e20ca0976b8e4b6ff9b456dfad0c62 with amount 1000000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 03e4065b4c6bbc9d9920cffe12727d9611bbc5b7e96ba9d1d9b18eb228d2d13535
+   Can be unlocked to z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d with the point's witness
+   Can be reclaimed in 00:59:40 by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+Monitoring ptlc id 911dff5f339d302ca38181a7fee2e4b344e20ca0976b8e4b6ff9b456dfad0c62
+Ptlc was unlocked by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d; witness a3fce84a6a8631f5e1743bf4ee1da15b0f08334bd407a110bcfab8f5bb76ec56
+Done
+15:59:52 Bob read the witness off the chain: a3fce84a6a8631f5e1743bf4ee1da15b0f08334bd407a110bcfab8f5bb76ec56
+15:59:52 Bob unlocks Alice's entry with t + d
+Unlocking ptlc id 402a92487c03f1ab33299be29823abc65907743915281146e57a6ea4ca8ee421 with amount 100 QSR
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+16:00:04 collecting
+16:00:22 balances after:
+Balance for account-chain z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d having height 263
+  95320 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  9839 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+Balance for account-chain z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e having height 277
+  500380 QSR zenon.devnet zts1qsrxxxxxxxxxxxxxmrhjll
+  49817 ZNN zenon.devnet zts1znnxxxxxxxxxxxxx9z4ulx
+16:00:22 done: Alice has Bob's ZNN, Bob has Alice's QSR; the chain shows T and T+dG, t and t+d

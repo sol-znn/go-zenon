@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- The lab's mark, kept in sync with src/components/LabMark.vue. -->
+  <defs>
+    <linearGradient id="p" gradientUnits="userSpaceOnUse" x1="0" y1="4" x2="0" y2="20">
+      <stop offset="0%" stop-color="hsl(120 86% 63%)"/>
+      <stop offset="100%" stop-color="hsl(145 100% 38%)"/>
+    </linearGradient>
+  </defs>
+  <path d="M6.6,19.6V5.3H14.6L18.7,9.4V11.4L14.6,15.5H10.6" fill="none" stroke="url(#p)" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

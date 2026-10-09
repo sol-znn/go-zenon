@@ -1,0 +1,34 @@
+{
+  "note": "Public verification fields only. Synthetic offline qualification; no Bitcoin transaction or live-chain claim.",
+  "schema": "ptlc-bip340-completed-signatures-v1",
+  "vectors": [
+    {
+      "id": "musig2-single",
+      "message_hex": "0303030303030303030303030303030303030303030303030303030303030303",
+      "public_key_hex": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "signature_hex": "cc9d8436340048bc7d40384c002e1f73ecda35c742d26d7df7266b791b50dc16f35a6eb7c1cc4833739400695eccecb75f181d4336ae8c863dd43d87db6f873d",
+      "valid": true
+    },
+    {
+      "id": "schnorr-fun-single",
+      "message_hex": "0303030303030303030303030303030303030303030303030303030303030303",
+      "public_key_hex": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "signature_hex": "40e912d91f029f0334ec9d4b0fcdb277eb0b375ca8b77e2d8e5479b8bc47bf44133e99669d0c22ce16f59821971bd6bb53654d55e40abdf1c67393b3532b4c20",
+      "valid": true
+    },
+    {
+      "id": "musig2-aggregate-btc-synthetic",
+      "message_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "public_key_hex": "1fc559d9c96c5953895d3150e64ebf3dd696a0b08e758650b48ff6251d7e60d1",
+      "signature_hex": "bd5e5375cdb6ce950a1febcbdd6f0551f6faee445b7d5265a5872d048f19a6d61c6148482a5dcff3f8085623b7e801aac3c28de076c25381f2b587cb54bb9988",
+      "valid": true
+    },
+    {
+      "id": "musig2-aggregate-znn-contract-digest",
+      "message_hex": "e357d6597d0149f0adb2ab0f0d7dff932412e2f55fd9b94bb9301c8ccf9df974",
+      "public_key_hex": "b6968afcd8cca764d730f334c0b1652ee6d8cc090d400157a94f68966792a2e3",
+      "signature_hex": "2acd66889b1eb734ab49be01b0237837a9ca1132c9c04a9b8d6b66d6f73be7083a9d0a198d66ba5fd51de54c7adac62fa8b5ba43ed91526c7ad04f985aa79bae",
+      "valid": true
+    }
+  ]
+}

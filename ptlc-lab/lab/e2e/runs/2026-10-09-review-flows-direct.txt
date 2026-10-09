@@ -1,0 +1,97 @@
+# The new and changed scenarios, run by the flows program itself against the devnet before the
+# image was built, 2026-10-09 (UTC). flows -nom http://127.0.0.1:35997 -scenario <id>; one at a time.
+# For each: when, the result line, then every step that settled, with its answer.
+
+14:49:35-14:50:02 bad-locks exit=0 @flow {"detail":"The three broken locks never left Alice's account, and the expired one was refunded","result":"pass"}
+14:50:02-14:51:00 weak-key exit=0 @flow {"detail":"The contract took a lock that any signature opens, and Carol took the 1 ZNN. The lab's console and CLI refuse such a key; the contract does not yet","result":"pass"}
+14:51:00-14:53:01 signed-elsewhere exit=0 @flow {"detail":"Bob's signatures for another network and another contract were refused, and the one for this lock paid him","result":"pass"}
+14:53:01-14:54:01 wrong-order exit=0 @flow {"detail":"Alice has Bob's 1 ZNN and all of her QSR. Bob locked first without holding the secret: the order was the mistake, not the contract","result":"pass"}
+14:54:01-14:54:02 swap-btc-bad-terms exit=0 @flow {"detail":"Bob refused terms under which Alice could have taken the bitcoin back and the ZNN too; nothing was locked","result":"pass"}
+14:54:02-14:55:31 front-run exit=0 @flow {"detail":"Knowing the secret did not let Carol take the funds; Bob was paid","result":"pass"}
+14:55:55-14:57:40 swap exit=0 @flow {"detail":"Alice got 1 ZNN and Bob got 10 QSR, with nobody in between","result":"pass"}
+14:57:40-15:01:01 late-reveal exit=0 @flow {"detail":"Alice's late call was refused and gave her secret away: Bob has his 1 ZNN back and her 10 QSR","result":"pass"}
+15:01:01-15:04:52 swap-abandoned exit=0 @flow {"detail":"Both took their own funds back: 1 ZNN to Bob, then 10 QSR to Alice","result":"pass"}
+
+## bad-locks
+{"step":"impossible","state":"done","answer":"rejected","detail":"The network would not take it: invalid point lock. Nothing left the account."}
+{"step":"no-type","state":"done","answer":"rejected","detail":"The network would not take it: invalid point type. Nothing left the account."}
+{"step":"empty","state":"done","answer":"rejected","detail":"The network would not take it: invalid token or amount. Nothing left the account."}
+{"step":"late","state":"done","answer":"refused","detail":"The contract refused, as it should","hash":"cb2f7a3494e8a36499b99ceb2ad1d2e11b7ce7a105c38ad1c3807798fd30d41e"}
+{"step":"refund","state":"done","detail":"1 ZNN paid to Alice"}
+{"detail":"The three broken locks never left Alice's account, and the expired one was refunded","result":"pass"}
+
+## weak-key
+{"step":"lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"a919ebcc08d8180876ce9a31e1c6c93252c8e9a017ae633e6891abd048c44f0d"}
+{"step":"forge","state":"done","detail":"Sixty-four bytes written down by hand: a 1, then zeros"}
+{"step":"take","state":"done","answer":"accepted","detail":"The contract accepted","hash":"a277511ef7a8446e07502ebb3e34d5a2bdccb4d291f5f3654c56e9e4cb3b7040"}
+{"step":"carol-paid","state":"done","detail":"1 ZNN paid to Carol"}
+{"detail":"The contract took a lock that any signature opens, and Carol took the 1 ZNN. The lab's console and CLI refuse such a key; the contract does not yet","result":"pass"}
+
+## signed-elsewhere
+{"step":"key","state":"done","detail":"The same kind of key a Taproot address has"}
+{"step":"lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"030a466ebd390356671648769bdb77e23ee3bf40d264805e829805b1197a3937"}
+{"step":"other-chain","state":"done","answer":"refused","detail":"The contract refused, as it should","hash":"2de2c9b486a2750a4f6992f61abbb7b674d3ba6193f71f55acdf96c4b22a4187"}
+{"step":"other-contract","state":"done","answer":"refused","detail":"The contract refused, as it should","hash":"aaf7b7f09641d0dae94b019b39e3ab698e1a7c66810d2625c1622ca69a3985cc"}
+{"step":"unlock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"e69e0144a74624a07652dc68ba93540dfb2a68f41faa4e1716b274c81c53c565"}
+{"step":"paid","state":"done","detail":"1 ZNN paid to Bob"}
+{"detail":"Bob's signatures for another network and another contract were refused, and the one for this lock paid him","result":"pass"}
+
+## wrong-order
+{"step":"agree","state":"done","detail":"Alice keeps the secret behind it to herself, as she should"}
+{"step":"bob-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"82fa32e64cde363423c6dc5ed3efcd13b50507a49765790c16ba171b9548df3a"}
+{"step":"alice-take","state":"done","answer":"accepted","detail":"The contract accepted","hash":"096519315e15db254d23bc49300d24dd0cbd2a63d6a73094eab886163dc18a01"}
+{"step":"alice-paid","state":"done","detail":"1 ZNN paid to Alice"}
+{"step":"walk","state":"done","detail":"Nothing obliges her to, and the contract has no way to know there was a deal"}
+{"step":"bob-read","state":"done","detail":"He has the secret, and no lock of Alice's for it to open"}
+{"detail":"Alice has Bob's 1 ZNN and all of her QSR. Bob locked first without holding the secret: the order was the mistake, not the contract","result":"pass"}
+
+## swap-btc-bad-terms
+{"step":"terms","state":"done","detail":"Her refund would open two blocks from now; his ZNN would be open to her for four minutes"}
+{"step":"refuse","state":"done","detail":"He gave her nothing to sign against and locked nothing"}
+{"detail":"Bob refused terms under which Alice could have taken the bitcoin back and the ZNN too; nothing was locked","result":"pass"}
+
+## front-run
+{"step":"open","state":"done","answer":"rejected","detail":"The network would not take it: invalid destination. Nothing left the account."}
+{"step":"lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"ea3e285f84e8ba50b0b1fe35946dbd80fb24c09a38f34a86ae4dd1190d8c52fd"}
+{"step":"snoop","state":"done","answer":"refused","detail":"The contract refused, as it should","hash":"32055aae4e8ef626a575e05e5368ae22128723f4f8c9cea0f9c27b87639bd267"}
+{"step":"unlock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"961e35103f2a9fe55a7745ee8143463bd2c52f948593e707031a371901f87d37"}
+{"step":"paid","state":"done","detail":"1 ZNN paid to Bob"}
+{"detail":"Knowing the secret did not let Carol take the funds; Bob was paid","result":"pass"}
+
+## swap
+{"step":"agree","state":"done","detail":"With a second number they both know, so the two locks will not look alike"}
+{"step":"alice-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"47d855fc0cc2fde0355b5cd201da390341ed878e55872025ead735abbb0425c6"}
+{"step":"bob-check","state":"done","detail":"Right amount, right lock, pays Bob, and it outlasts the one he is about to make"}
+{"step":"bob-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"99f0944aced3cbaf41cbe29250af1f55c6cd5799dd997a928b99a4a38c1b3abb"}
+{"step":"alice-unlock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"e8c944f8661e77ae01085bef5ab036997015141f0815e355bd3c12936f21e8d5"}
+{"step":"alice-paid","state":"done","detail":"1 ZNN paid to Alice"}
+{"step":"bob-read","state":"done","detail":"It is in Alice's unlock, public to everyone now"}
+{"step":"bob-unlock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"0ef67211f0d52da3ce6bed1474f28db6d89e0856c42106082bf1a7f18b772df0"}
+{"step":"bob-paid","state":"done","detail":"10 QSR paid to Bob"}
+{"detail":"Alice got 1 ZNN and Bob got 10 QSR, with nobody in between","result":"pass"}
+
+## late-reveal
+{"step":"agree","state":"done","detail":"With a second number they both know, so the two locks will not look alike"}
+{"step":"alice-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"c95e0e4dcacb9b6bce375e9f4936e4f25d22c21232cde379158e553f110fe406"}
+{"step":"bob-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"e9f54318aca3683c6e9857cadef387db361e9409a9f38d184e39f06e42492e8a"}
+{"step":"wait","state":"done","detail":"The deadline has passed on the chain's clock"}
+{"step":"alice-late","state":"done","answer":"refused","detail":"The contract refused, as it should","hash":"6bff87dbd3873f4d30cec8fdf0e2c1a0f261066955d67d5d37a5bab06e8aec08"}
+{"step":"bob-read","state":"done","detail":"The contract said no to Alice, but her call, secret and all, is on the chain for anyone"}
+{"step":"bob-reclaim","state":"done","answer":"accepted","detail":"The contract accepted","hash":"6310c1a979f1585384e14a7a1997b1ac1dcc2259a153469b7a679de644dd2fbc"}
+{"step":"bob-back","state":"done","detail":"1 ZNN paid to Bob"}
+{"step":"bob-unlock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"7ec2e874e1a5655d820695daca5b548f3c30a62df6d61edcfea14d8b2372fb0c"}
+{"step":"bob-paid","state":"done","detail":"10 QSR paid to Bob"}
+{"detail":"Alice's late call was refused and gave her secret away: Bob has his 1 ZNN back and her 10 QSR","result":"pass"}
+
+## swap-abandoned
+{"step":"agree","state":"done","detail":"With a second number they both know, so the two locks will not look alike"}
+{"step":"alice-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"618956bc1cf6e8c01503a6732242faa6d350afd7c446824a693867201cee795d"}
+{"step":"bob-lock","state":"done","answer":"accepted","detail":"The contract accepted","hash":"536fbecff0cfe15051c021d89351d1dfec872502dab230692e8de46c21d2d1c9"}
+{"step":"stall","state":"done","detail":"Her secret stays secret, so neither lock can be opened"}
+{"step":"wait-bob","state":"done","detail":"The deadline has passed on the chain's clock"}
+{"step":"bob-reclaim","state":"done","answer":"accepted","detail":"The contract accepted","hash":"a9e31b0693b74e6f9dfae0a4e21b2f450765af531cf31d98b5d682b9aeb03a7b"}
+{"step":"bob-back","state":"done","detail":"1 ZNN paid to Bob"}
+{"step":"wait-alice","state":"done","detail":"The deadline has passed on the chain's clock"}
+{"step":"alice-reclaim","state":"done","answer":"accepted","detail":"The contract accepted","hash":"6affb5dbcbf3d015ed980c44e688d291d3493f99cd1c0cf20fb7e4a9fc83ece3"}
+{"step":"alice-back","state":"done","detail":"10 QSR paid to Alice"}
+{"detail":"Both took their own funds back: 1 ZNN to Bob, then 10 QSR to Alice","result":"pass"}

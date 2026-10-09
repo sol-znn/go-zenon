@@ -1,0 +1,40 @@
+From 639aa8a518d14ac13ffec6033a063fdcdbcb842d Mon Sep 17 00:00:00 2001
+From: 0x3639 <0x3639@protonmail.com>
+Date: Wed, 27 May 2026 05:17:56 -0500
+Subject: [PATCH 03/12] Document PTLC rollout caveat
+
+(cherry picked from commit 7635f8c756260d18c983aee8570b419149bbf095)
+(cherry picked from commit 9e2d76d647bc2e814139ee092563f30493bc4619)
+---
+ docs/ptlc/README.md                     | 2 ++
+ vm/embedded/implementation/ptlc_test.go | 1 +
+ 2 files changed, 3 insertions(+)
+
+diff --git a/docs/ptlc/README.md b/docs/ptlc/README.md
+index dec48d8..a41334d 100644
+--- a/docs/ptlc/README.md
++++ b/docs/ptlc/README.md
+@@ -50,6 +50,8 @@ HTLC unlocks prove knowledge of a preimage for a stored hash digest. PTLC unlock
+ 
+ The PTLC contract is available only after `types.PtlcSpork` is enforced. The PTLC contract map includes the prior HTLC contract map, so existing embedded contracts remain available after PTLC activation.
+ 
++Operational rollout must activate sporks in chronological order. `PtlcSpork` assumes the prior HTLC and bridge/liquidity sporks have already been activated.
++
+ ## Related docs
+ 
+ - [Signing](SIGNING.md)
+diff --git a/vm/embedded/implementation/ptlc_test.go b/vm/embedded/implementation/ptlc_test.go
+index c22d12b..784acdd 100644
+--- a/vm/embedded/implementation/ptlc_test.go
++++ b/vm/embedded/implementation/ptlc_test.go
+@@ -96,6 +96,7 @@ func TestPtlc_VerifySignatureStableErrors(t *testing.T) {
+ 	}
+ 	message := definition.GetPtlcUnlockMessage(chainIdentifier, info.PointType, id, destination)
+ 
++	// All-0xff is outside the secp256k1 field/order ranges, so ParseSignature fails before verification.
+ 	common.ExpectError(t, verifyPtlcSignature(info, chainIdentifier, id, destination, bytes.Repeat([]byte{0xff}, 64)), constants.ErrInvalidPointSignature)
+ 
+ 	signature, err := schnorr.Sign(privateKey, message)
+-- 
+2.53.0.windows.2
+

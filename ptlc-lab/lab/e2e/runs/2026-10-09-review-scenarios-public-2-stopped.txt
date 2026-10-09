@@ -1,0 +1,93 @@
+16:31:35   ok   the page shows a card for each of the lab's 19 scenarios: 19 cards
+16:31:35   ok   the page shows the chain is live: Chain live, block 9,013
+16:31:35 Unlock with a secret (secret, 5 steps)
+16:32:26     [done] Alice makes a secret and the lock that fits it: A random number, and a lock only that number opens
+16:32:26     [done, accepted] Alice locks 1 ZNN for Bob: The contract accepted
+16:32:26     [done] Alice gives Bob the secret: Off the chain; nobody else sees it yet
+16:32:26     [done, accepted] Bob unlocks with the secret: The contract accepted
+16:32:26     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:32:26   ok   secret: the page says it passed: Passed | Bob opened the lock with the secret and was paid 1 ZNN | 46 s; 51 s here
+16:32:26   ok   secret: all 5 steps are drawn settled: done done done done done
+16:32:26   ok   secret: each call is drawn with the outcome it was meant to meet: accepted accepted
+16:32:26 Unlock with a Zenon wallet signature (wallet-key, 4 steps)
+16:33:24     [done, accepted] Alice locks 1 ZNN to Bob's wallet key: The contract accepted
+16:33:24     [done] Bob signs "pay Bob" with his wallet key: The signature is only good for this lock, and only to pay Bob
+16:33:24     [done, accepted] Bob unlocks with the signature: The contract accepted
+16:33:24     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:33:24   ok   wallet-key: the page says it passed: Passed | Bob's wallet signature opened the lock and he was paid 1 ZNN | 54 s; 58 s here
+16:33:24   ok   wallet-key: all 4 steps are drawn settled: done done done done
+16:33:24   ok   wallet-key: each call is drawn with the outcome it was meant to meet: accepted accepted
+16:33:24 Unlock with a Bitcoin-style signature (bitcoin-key, 5 steps)
+16:34:26     [done] Bob makes a Bitcoin-style key: The same kind of key a Taproot address has
+16:34:26     [done, accepted] Alice locks 1 ZNN to that key: The contract accepted
+16:34:26     [done] Bob signs "pay Bob" with the key: A Schnorr signature, the kind Bitcoin checks
+16:34:26     [done, accepted] Bob unlocks with the signature: The contract accepted
+16:34:26     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:34:26   ok   bitcoin-key: the page says it passed: Passed | A Bitcoin-style signature opened the lock and Bob was paid 1 ZNN | 56 s; 61 s here
+16:34:26   ok   bitcoin-key: all 5 steps are drawn settled: done done done done done
+16:34:26   ok   bitcoin-key: each call is drawn with the outcome it was meant to meet: accepted accepted
+16:34:26 Someone else delivers the unlock (relay, 5 steps)
+16:35:15     [done, accepted] Alice locks 1 ZNN to Bob's key: The contract accepted
+16:35:15     [done] Bob signs "pay Bob": Bob needs no funds and sends nothing himself
+16:35:15     [done] Bob hands Carol the signature: Carol could be a service that sends calls for others
+16:35:15     [done, accepted] Carol delivers it: The contract accepted
+16:35:15     [done] Bob receives 1 ZNN, Carol nothing: 1 ZNN paid to Bob
+16:35:15   ok   relay: the page says it passed: Passed | Carol delivered Bob's signature and the 1 ZNN went to Bob | 44 s; 49 s here
+16:35:15   ok   relay: all 5 steps are drawn settled: done done done done done
+16:35:15   ok   relay: each call is drawn with the outcome it was meant to meet: accepted accepted
+16:35:15 A wrong secret is refused (wrong-secret, 5 steps)
+16:36:44     [done] Alice makes a secret and its lock: A random number, and a lock only that number opens
+16:36:44     [done, accepted] Alice locks 1 ZNN for Bob: The contract accepted
+16:36:44     [done, refused] Bob tries a wrong secret: The contract refused, as it should
+16:36:44     [done, accepted] Bob tries the right one: The contract accepted
+16:36:44     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:36:44   ok   wrong-secret: the page says it passed: Passed | The wrong secret was refused, and the right one still paid Bob | 84 s; 89 s here
+16:36:44   ok   wrong-secret: all 5 steps are drawn settled: done done done done done
+16:36:44   ok   wrong-secret: each call is drawn with the outcome it was meant to meet: accepted refused accepted
+16:36:44 A copied signature pays only its owner (stolen-signature, 5 steps)
+16:38:14     [done, accepted] Alice locks 1 ZNN to Bob's key: The contract accepted
+16:38:14     [done] Bob signs "pay Bob": The signature covers who is paid
+16:38:14     [done, refused] Carol sends it as "pay Carol": The contract refused, as it should
+16:38:14     [done, accepted] Bob unlocks with his signature: The contract accepted
+16:38:14     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:38:14   ok   stolen-signature: the page says it passed: Passed | Carol's copy of the signature was refused, and Bob was paid | 86 s; 90 s here
+16:38:14   ok   stolen-signature: all 5 steps are drawn settled: done done done done done
+16:38:14   ok   stolen-signature: each call is drawn with the outcome it was meant to meet: accepted refused accepted
+16:38:14 A stolen secret is useless (front-run, 5 steps)
+16:39:44     [done, rejected] Alice tries a secret lock that names nobody: The network would not take it: invalid destination. Nothing left the account.
+16:39:44     [done, accepted] Alice locks 1 ZNN for Bob, by name: The contract accepted
+16:39:44     [done, refused] Carol knows the secret and tries to take it: The contract refused, as it should
+16:39:44     [done, accepted] Bob unlocks with the secret: The contract accepted
+16:39:44     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:39:44   ok   front-run: the page says it passed: Passed | Knowing the secret did not let Carol take the funds; Bob was paid | 86 s; 90 s here
+16:39:44   ok   front-run: all 5 steps are drawn settled: done done done done done
+16:39:44   ok   front-run: each call is drawn with the outcome it was meant to meet: rejected accepted refused accepted
+16:39:44 A lock pays once (once, 4 steps)
+16:40:55     [done, accepted] Alice locks 1 ZNN for Bob: The contract accepted
+16:40:55     [done, accepted] Bob unlocks and is paid: The contract accepted
+16:40:55     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:40:55     [done, refused] Bob sends the same unlock again: The contract refused, as it should
+16:40:55   ok   once: the page says it passed: Passed | The lock paid Bob once, and the second try did nothing | 66 s; 71 s here
+16:40:55   ok   once: all 4 steps are drawn settled: done done done done
+16:40:55   ok   once: each call is drawn with the outcome it was meant to meet: accepted accepted refused
+16:40:55 Broken locks are turned away (bad-locks, 5 steps)
+16:41:26     [done, rejected] Alice tries a lock to a key that cannot exist: The network would not take it: invalid point lock. Nothing left the account.
+16:41:26     [done, rejected] Alice tries a kind of lock that does not exist: The network would not take it: invalid point type. Nothing left the account.
+16:41:26     [done, rejected] Alice tries a lock with nothing in it: The network would not take it: invalid token or amount. Nothing left the account.
+16:41:26     [done, refused] Alice tries a lock whose deadline has passed: The contract refused, as it should
+16:41:26     [done] The 1 ZNN comes straight back: 1 ZNN paid to Alice
+16:41:26   ok   bad-locks: the page says it passed: Passed | The three broken locks never left Alice's account, and the expired one was refunded | 26 s; 31 s here
+16:41:26   ok   bad-locks: all 5 steps are drawn settled: done done done done done
+16:41:26   ok   bad-locks: each call is drawn with the outcome it was meant to meet: rejected rejected rejected refused
+16:41:26 A signature made for somewhere else is refused (signed-elsewhere, 6 steps)
+16:43:25     [done] Bob makes a Bitcoin-style key: The same kind of key a Taproot address has
+16:43:25     [done, accepted] Alice locks 1 ZNN to that key: The contract accepted
+16:43:25     [done, refused] Bob unlocks with a signature made for another network: The contract refused, as it should
+16:43:25     [done, refused] Bob unlocks with a signature made for another contract: The contract refused, as it should
+16:43:25     [done, accepted] Bob unlocks with the one made for this lock: The contract accepted
+16:43:25     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+16:43:25   ok   signed-elsewhere: the page says it passed: Passed | Bob's signatures for another network and another contract were refused, and the one for this lock paid him | 1 min 54 s; 119 s here
+16:43:25   ok   signed-elsewhere: all 6 steps are drawn settled: done done done done done done
+16:43:25   ok   signed-elsewhere: each call is drawn with the outcome it was meant to meet: accepted refused refused accepted
+16:43:25 After the deadline, the owner takes it back (deadline, 7 steps)
+16:44:22 stopped here on purpose: the owner's call on T-30 changes the weak-key verdict, and the redeploy that carries it forgets the page's results; the deadline run it had started finished in the lab at 16:45:50, exit 0

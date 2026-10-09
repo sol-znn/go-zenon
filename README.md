@@ -47,3 +47,15 @@ More detail:
 - [PTLC contract docs](docs/ptlc/README.md)
 - [Local devnet docs](docker/devnet/README.md)
 - [Local devnet hardening notes](PTLC_DEVNET_HARDENING.md)
+
+## PTLC lab console
+
+[`ptlc-lab/`](ptlc-lab/README.md) is a second, independent way to exercise the contract: a browser console that makes each of the four calls itself, a page of twenty-one scenarios that run at a button, a `znn-cli` with `ptlc.*` commands, and three swaps (NoM-to-NoM on point locks, NoM-to-NoM on key locks, NoM-to-BTC against regtest bitcoind). It builds the node from this branch and runs it on a devnet of its own, beside the one above.
+
+```shell
+cd ptlc-lab
+docker compose up -d --build   # then open http://localhost:8470
+docker compose down -v         # stop and wipe
+```
+
+It publishes host ports 35991, 35997 and 35998, as the devnet above does, so run one at a time or move one of them. [Launching the lab console](ptlc-lab/README.md#launching-the-lab-console) has the rest.

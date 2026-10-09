@@ -1,0 +1,27 @@
+15:39:27 start here
+15:39:27   ok   the node answers and the spork is active
+15:39:27   ok   the RPC node has all four peers: 4 of 4
+15:39:27 swap, step by step: Alice and Bob as lab keys, expiries 6 and 12 minutes
+15:39:42   ok   Bob's Create accepted
+15:40:12   ok   Alice's Create accepted, after her five checks of Bob's entry passed
+15:40:14   ok   while her unlock is on its way the button is gone, so it cannot be sent twice
+15:40:42   ok   Alice's Unlock accepted
+15:40:42   ok   Bob reads t off the chain and it is the scalar of T
+15:41:12   ok   Bob's Unlock with t + d accepted
+15:41:12   ok   both entries are paid and the bench says so
+15:41:12 a BIP-340 key lock with an open destination, opened by Bob with a signature
+15:41:42   ok   Create with a BIP-340 lock and no fixed destination accepted: Lock 1 ZNN to a BIP-340 key | Alice | Signing | Published | In a momentum | Acce
+15:41:43   ok   the bench predicts the unlock will be accepted
+15:42:11   ok   Unlock by signature accepted: Bob was not named by the entry, the signature named him
+15:42:11 a wrong witness, sent anyway
+15:42:43   ok   Create to a pasted point accepted
+15:42:44   ok   the bench predicts the refusal
+15:43:12   ok   the contract refuses the wrong scalar and the page says why: s does not open the lock | included in momentum 2,962; the contract answered 1 momentum later, 10 s by the chain's clock
+15:43:42   ok   the right scalar, 1, opens it
+15:43:42 znn-cli from the Programs bench
+15:43:45   ok   the CLI ran in the lab container and its output streamed to the page
+15:43:45 raw RPC
+15:43:48   ok   getById on an entry that was paid says only "data non existent": data non existent
+
+All checks passed
+exit 0

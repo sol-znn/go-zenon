@@ -1,0 +1,581 @@
+From 3fe0a5b4b44f67b7f4a5a7542b67f0df5c25b194 Mon Sep 17 00:00:00 2001
+From: 0x3639 <0x3639@protonmail.com>
+Date: Wed, 27 May 2026 08:26:47 -0500
+Subject: [PATCH 06/12] Strengthen PTLC adversarial coverage
+
+(cherry picked from commit f1ffe05d86cec61071f5930fc10a60abcec927cd)
+(cherry picked from commit b1ce4acf3932df2a93ec267047836dfe3da77192)
+---
+ docs/ptlc/README.md                     |   1 +
+ docs/ptlc/RELEASE_NOTES.md              |  15 ++
+ docs/ptlc/SIGNING.md                    |  13 ++
+ vm/embedded/implementation/ptlc.go      |  34 +++--
+ vm/embedded/implementation/ptlc_test.go | 179 +++++++++++++++-------
+ vm/embedded/tests/ptlc_test.go          | 191 ++++++++++++++++++++++++
+ 6 files changed, 369 insertions(+), 64 deletions(-)
+ create mode 100644 docs/ptlc/RELEASE_NOTES.md
+
+diff --git a/docs/ptlc/README.md b/docs/ptlc/README.md
+index 21f78b2..11ef978 100644
+--- a/docs/ptlc/README.md
++++ b/docs/ptlc/README.md
+@@ -58,3 +58,4 @@ Operational rollout must activate sporks in chronological order. `PtlcSpork` ass
+ 
+ - [Signing](SIGNING.md)
+ - [Security](SECURITY.md)
++- [Release notes](RELEASE_NOTES.md)
+diff --git a/docs/ptlc/RELEASE_NOTES.md b/docs/ptlc/RELEASE_NOTES.md
+new file mode 100644
+index 0000000..6281764
+--- /dev/null
++++ b/docs/ptlc/RELEASE_NOTES.md
+@@ -0,0 +1,15 @@
++# PTLC release notes
++
++## Operator and integrator framing
++
++This release adds a spork-gated signature time-lock embedded contract that can serve as a PTLC-compatible primitive.
++
++It does not add a complete adaptor-signature PTLC swap protocol, Bitcoin-side adaptor-signature flow, scalar extraction rule, wallet UX, or cross-chain swap implementation. Any release announcement, wallet integration, bridge integration, or swap UI should describe the feature as a signature time-lock primitive until a higher-level protocol is specified and tested.
++
++## Activation note
++
++Activate sporks in chronological order. `PtlcSpork` assumes the prior HTLC and bridge/liquidity sporks have already been activated.
++
++## Signing compatibility
++
++Wallets and SDKs must sign the exact domain-separated message in [Signing](SIGNING.md). Signatures over the old `Hash(id || destination)` format are invalid.
+diff --git a/docs/ptlc/SIGNING.md b/docs/ptlc/SIGNING.md
+index d37faa2..fa6a52a 100644
+--- a/docs/ptlc/SIGNING.md
++++ b/docs/ptlc/SIGNING.md
+@@ -28,6 +28,19 @@ Fields:
+ 
+ The chain identifier is consensus state, not a wallet preference. A signature produced for another Zenon chain id is invalid on this chain.
+ 
++Wire encoding before hashing:
++
++| Offset | Size | Field | Encoding |
++| ---: | ---: | --- | --- |
++| 0 | 20 | domain | ASCII bytes for `zenon-ptlc-unlock:v1` |
++| 20 | 8 | chain identifier | unsigned 64-bit big-endian integer from `common.Uint64ToBytes` |
++| 28 | 20 | contract address | raw `types.PtlcContract.Bytes()` |
++| 48 | 1 | point type | single unsigned byte |
++| 49 | 32 | PTLC id | raw `types.Hash.Bytes()` of the create block hash |
++| 81 | 20 | destination | raw `types.Address.Bytes()` |
++
++The hash preimage is exactly 101 bytes. The unlock message is `crypto.Hash`, Zenon's SHA3-256 helper, over that preimage.
++
+ ## ED25519 mode
+ 
+ `PointTypeED25519` stores a 32-byte ED25519 public key and expects a 64-byte ED25519 signature over the unlock message.
+diff --git a/vm/embedded/implementation/ptlc.go b/vm/embedded/implementation/ptlc.go
+index dc04a47..45dff33 100644
+--- a/vm/embedded/implementation/ptlc.go
++++ b/vm/embedded/implementation/ptlc.go
+@@ -20,6 +20,10 @@ var (
+ 	ptlcLog = common.EmbeddedLogger.New("contract", "ptlc")
+ )
+ 
++// This embedded contract is a PTLC-compatible signature time-lock primitive.
++// It verifies ordinary ED25519 or BIP340 signatures over domain-separated
++// unlock messages; adaptor-signature scalar extraction and full cross-chain
++// swap protocol semantics must be specified by higher-level protocols.
+ func isPositiveAmount(amount *big.Int) bool {
+ 	return amount != nil && amount.Sign() > 0
+ }
+@@ -32,6 +36,21 @@ func signatureHashForLog(signature []byte) string {
+ 	return base64.StdEncoding.EncodeToString(crypto.Hash(signature))
+ }
+ 
++func verifyBIP340Signature(message, pointLock, signature []byte) error {
++	s, err := schnorr.ParseSignature(signature)
++	if err != nil {
++		return constants.ErrInvalidPointSignature
++	}
++	pk, err := schnorr.ParsePubKey(pointLock)
++	if err != nil {
++		return constants.ErrInvalidPointLock
++	}
++	if !s.Verify(message, pk) {
++		return constants.ErrInvalidPointSignature
++	}
++	return nil
++}
++
+ func checkPtlc(param definition.CreatePtlcParam) error {
+ 
+ 	if param.PointType != definition.PointTypeED25519 && param.PointType != definition.PointTypeBIP340 {
+@@ -84,6 +103,8 @@ func verifyPtlcSignature(ptlcInfo *definition.PtlcInfo, chainIdentifier uint64,
+ 	if ptlcInfo.PointType == definition.PointTypeED25519 {
+ 		valid, err := wallet.VerifySignature(ed25519.PublicKey(ptlcInfo.PointLock), unlockMessage, signature)
+ 		if err != nil {
++			// Stored-state validation already checks ED25519 point-lock length;
++			// keep this mapping as defense in depth for direct verifier callers.
+ 			return constants.ErrInvalidPointLock
+ 		}
+ 		if !valid {
+@@ -93,18 +114,7 @@ func verifyPtlcSignature(ptlcInfo *definition.PtlcInfo, chainIdentifier uint64,
+ 	}
+ 
+ 	if ptlcInfo.PointType == definition.PointTypeBIP340 {
+-		s, err := schnorr.ParseSignature(signature)
+-		if err != nil {
+-			return constants.ErrInvalidPointSignature
+-		}
+-		pk, err := schnorr.ParsePubKey(ptlcInfo.PointLock)
+-		if err != nil {
+-			return constants.ErrInvalidPointLock
+-		}
+-		if !s.Verify(unlockMessage, pk) {
+-			return constants.ErrInvalidPointSignature
+-		}
+-		return nil
++		return verifyBIP340Signature(unlockMessage, ptlcInfo.PointLock, signature)
+ 	}
+ 
+ 	return constants.ErrInvalidPointType
+diff --git a/vm/embedded/implementation/ptlc_test.go b/vm/embedded/implementation/ptlc_test.go
+index 2ce6dc7..a821ecf 100644
+--- a/vm/embedded/implementation/ptlc_test.go
++++ b/vm/embedded/implementation/ptlc_test.go
+@@ -15,6 +15,7 @@ import (
+ 	"github.com/zenon-network/go-zenon/chain/nom"
+ 	"github.com/zenon-network/go-zenon/chain/store"
+ 	"github.com/zenon-network/go-zenon/common"
++	"github.com/zenon-network/go-zenon/common/crypto"
+ 	"github.com/zenon-network/go-zenon/common/db"
+ 	"github.com/zenon-network/go-zenon/common/types"
+ 	"github.com/zenon-network/go-zenon/consensus/api"
+@@ -110,6 +111,96 @@ func TestPtlc_VerifySignatureStableErrors(t *testing.T) {
+ 	common.ExpectError(t, verifyPtlcSignature(info, chainIdentifier, id, destination, nil), constants.ErrInvalidPointType)
+ }
+ 
++func ptlcUnlockMessageForContract(chainIdentifier uint64, contract types.Address, pointType uint8, id types.Hash, destination types.Address) []byte {
++	return crypto.Hash(common.JoinBytes(
++		[]byte(definition.PtlcUnlockMessageDomain),
++		common.Uint64ToBytes(chainIdentifier),
++		contract.Bytes(),
++		[]byte{pointType},
++		id.Bytes(),
++		destination.Bytes(),
++	))
++}
++
++func TestPtlc_VerifySignatureRejectsWrongDomainFields(t *testing.T) {
++	chainIdentifier := uint64(100)
++	id := types.NewHash([]byte("ptlc-domain-id"))
++	otherId := types.NewHash([]byte("ptlc-domain-other-id"))
++	destination := User1.Address
++
++	edInfo := &definition.PtlcInfo{
++		Id:             id,
++		TimeLocked:     User1.Address,
++		TokenStandard:  types.ZnnTokenStandard,
++		Amount:         big.NewInt(1),
++		ExpirationTime: 1000000000,
++		PointType:      definition.PointTypeED25519,
++		PointLock:      User1.Public,
++	}
++
++	common.ExpectError(t, verifyPtlcSignature(edInfo, chainIdentifier, id, destination, User1.Sign(ptlcUnlockMessageForContract(
++		chainIdentifier,
++		types.HtlcContract,
++		definition.PointTypeED25519,
++		id,
++		destination,
++	))), constants.ErrInvalidPointSignature)
++
++	common.ExpectError(t, verifyPtlcSignature(edInfo, chainIdentifier, id, destination, User1.Sign(definition.GetPtlcUnlockMessage(
++		chainIdentifier,
++		definition.PointTypeBIP340,
++		id,
++		destination,
++	))), constants.ErrInvalidPointSignature)
++
++	common.ExpectError(t, verifyPtlcSignature(edInfo, chainIdentifier, id, destination, User1.Sign(definition.GetPtlcUnlockMessage(
++		chainIdentifier,
++		definition.PointTypeED25519,
++		otherId,
++		destination,
++	))), constants.ErrInvalidPointSignature)
++
++	privateKeyBytes := bytes.Repeat([]byte{2}, 32)
++	privateKey, publicKey := btcec.PrivKeyFromBytes(privateKeyBytes)
++	bip340Info := &definition.PtlcInfo{
++		Id:             id,
++		TimeLocked:     User1.Address,
++		TokenStandard:  types.ZnnTokenStandard,
++		Amount:         big.NewInt(1),
++		ExpirationTime: 1000000000,
++		PointType:      definition.PointTypeBIP340,
++		PointLock:      schnorr.SerializePubKey(publicKey),
++	}
++
++	wrongContractSignature, err := schnorr.Sign(privateKey, ptlcUnlockMessageForContract(
++		chainIdentifier,
++		types.HtlcContract,
++		definition.PointTypeBIP340,
++		id,
++		destination,
++	))
++	common.FailIfErr(t, err)
++	common.ExpectError(t, verifyPtlcSignature(bip340Info, chainIdentifier, id, destination, wrongContractSignature.Serialize()), constants.ErrInvalidPointSignature)
++
++	wrongPointTypeSignature, err := schnorr.Sign(privateKey, definition.GetPtlcUnlockMessage(
++		chainIdentifier,
++		definition.PointTypeED25519,
++		id,
++		destination,
++	))
++	common.FailIfErr(t, err)
++	common.ExpectError(t, verifyPtlcSignature(bip340Info, chainIdentifier, id, destination, wrongPointTypeSignature.Serialize()), constants.ErrInvalidPointSignature)
++
++	wrongIdSignature, err := schnorr.Sign(privateKey, definition.GetPtlcUnlockMessage(
++		chainIdentifier,
++		definition.PointTypeBIP340,
++		otherId,
++		destination,
++	))
++	common.FailIfErr(t, err)
++	common.ExpectError(t, verifyPtlcSignature(bip340Info, chainIdentifier, id, destination, wrongIdSignature.Serialize()), constants.ErrInvalidPointSignature)
++}
++
+ type validatePtlcSendBlockMethod interface {
+ 	ValidateSendBlock(*nom.AccountBlock) error
+ }
+@@ -266,75 +357,59 @@ func TestPtlc_BIP340OfficialVectors(t *testing.T) {
+ 	)
+ 
+ 	tests := []struct {
+-		name          string
+-		pubKey        string
+-		message       string
+-		signature     string
+-		wantVerify    bool
+-		wantPubKeyErr bool
++		name      string
++		pubKey    string
++		message   string
++		signature string
++		want      error
+ 	}{
+ 		{
+-			name:       "vector 0 valid",
+-			pubKey:     pubKey0,
+-			message:    message0,
+-			signature:  "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
+-			wantVerify: true,
++			name:      "vector 0 valid",
++			pubKey:    pubKey0,
++			message:   message0,
++			signature: "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
++			want:      nil,
+ 		},
+ 		{
+-			name:       "vector 3 all-ff message valid",
+-			pubKey:     "25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517",
+-			message:    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+-			signature:  "7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3",
+-			wantVerify: true,
++			name:      "vector 3 all-ff message valid",
++			pubKey:    "25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517",
++			message:   "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
++			signature: "7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3",
++			want:      nil,
+ 		},
+ 		{
+-			name:       "vector 7 invalid signature",
+-			pubKey:     pubKey1,
+-			message:    message1,
+-			signature:  "1FA62E331EDBC21C394792D2AB1100A7B432B013DF3F6FF4F99FCB33E0E1515F28890B3EDB6E7189B630448B515CE4F8622A954CFE545735AAEA5134FCCDB2BD",
+-			wantVerify: false,
++			name:      "vector 7 invalid signature",
++			pubKey:    pubKey1,
++			message:   message1,
++			signature: "1FA62E331EDBC21C394792D2AB1100A7B432B013DF3F6FF4F99FCB33E0E1515F28890B3EDB6E7189B630448B515CE4F8622A954CFE545735AAEA5134FCCDB2BD",
++			want:      constants.ErrInvalidPointSignature,
+ 		},
+ 		{
+-			name:       "wrong message",
+-			pubKey:     pubKey0,
+-			message:    "0100000000000000000000000000000000000000000000000000000000000000",
+-			signature:  "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
+-			wantVerify: false,
++			name:      "wrong message",
++			pubKey:    pubKey0,
++			message:   "0100000000000000000000000000000000000000000000000000000000000000",
++			signature: "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
++			want:      constants.ErrInvalidPointSignature,
+ 		},
+ 		{
+-			name:       "wrong x-only public key",
+-			pubKey:     pubKey1,
+-			message:    message0,
+-			signature:  "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
+-			wantVerify: false,
++			name:      "wrong x-only public key",
++			pubKey:    pubKey1,
++			message:   message0,
++			signature: "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
++			want:      constants.ErrInvalidPointSignature,
+ 		},
+ 		{
+-			name:          "vector 14 invalid public key",
+-			pubKey:        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30",
+-			message:       message1,
+-			signature:     "6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E17776969E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B",
+-			wantVerify:    false,
+-			wantPubKeyErr: true,
++			name:      "vector 14 invalid public key",
++			pubKey:    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30",
++			message:   message1,
++			signature: "6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E17776969E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B",
++			want:      constants.ErrInvalidPointLock,
+ 		},
+ 	}
+ 
+ 	for _, test := range tests {
+ 		t.Run(test.name, func(t *testing.T) {
+-			pubKey, err := schnorr.ParsePubKey(mustDecodeHex(t, test.pubKey))
+-			if test.wantPubKeyErr {
+-				if err == nil {
+-					t.Fatalf("expected public key parse error")
+-				}
+-				return
+-			}
+-			common.FailIfErr(t, err)
+-
+-			signature, err := schnorr.ParseSignature(mustDecodeHex(t, test.signature))
+-			common.FailIfErr(t, err)
+-
+-			if got := signature.Verify(mustDecodeHex(t, test.message), pubKey); got != test.wantVerify {
+-				t.Fatalf("unexpected verification result: got %v want %v", got, test.wantVerify)
+-			}
++			common.ExpectError(t, verifyBIP340Signature(mustDecodeHex(t, test.message), mustDecodeHex(t, test.pubKey), mustDecodeHex(t, test.signature)), test.want)
+ 		})
+ 	}
+ }
+diff --git a/vm/embedded/tests/ptlc_test.go b/vm/embedded/tests/ptlc_test.go
+index 0adf60c..5c7d059 100644
+--- a/vm/embedded/tests/ptlc_test.go
++++ b/vm/embedded/tests/ptlc_test.go
+@@ -67,6 +67,44 @@ func ptlcUnlockMessage(z mock.MockZenon, pointType uint8, id types.Hash, destina
+ 	return definition.GetPtlcUnlockMessage(z.Chain().ChainIdentifier(), pointType, id, destination)
+ }
+ 
++func ptlcUnlockMessageForContract(z mock.MockZenon, contract types.Address, pointType uint8, id types.Hash, destination types.Address) []byte {
++	return crypto.Hash(common.JoinBytes(
++		[]byte(definition.PtlcUnlockMessageDomain),
++		common.Uint64ToBytes(z.Chain().ChainIdentifier()),
++		contract.Bytes(),
++		[]byte{pointType},
++		id.Bytes(),
++		destination.Bytes(),
++	))
++}
++
++func createBIP340Ptlc(t *testing.T, z mock.MockZenon, pointLock []byte, expirationTime int64) types.Hash {
++	t.Helper()
++
++	createBlock := z.InsertSendBlock(&nom.AccountBlock{
++		Address:   g.User1.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName,
++			expirationTime,
++			definition.PointTypeBIP340,
++			pointLock,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(10 * g.Zexp),
++	}, nil, mock.SkipVmChanges)
++	z.InsertNewMomentum()
++
++	return createBlock.Hash
++}
++
++func signBIP340Unlock(t *testing.T, z mock.MockZenon, privateKey *btcec.PrivateKey, id types.Hash, destination types.Address) []byte {
++	t.Helper()
++
++	signature, err := schnorr.Sign(privateKey, ptlcUnlockMessage(z, definition.PointTypeBIP340, id, destination))
++	common.FailIfErr(t, err)
++	return signature.Serialize()
++}
++
+ func TestPtlc_spork_gating(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	defer z.StopPanic()
+@@ -427,6 +465,42 @@ func TestPtlc_wrongChainSignature(t *testing.T) {
+ 	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 10*g.Zexp)
+ }
+ 
++func TestPtlc_wrongContractSignature(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	createBlock := z.InsertSendBlock(&nom.AccountBlock{
++		Address:   g.User1.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName,
++			int64(genesisTimestamp+300),
++			definition.PointTypeED25519,
++			g.User2.Public,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(10 * g.Zexp),
++	}, nil, mock.SkipVmChanges)
++	z.InsertNewMomentum()
++
++	ptlcId := createBlock.Hash
++	wrongContractMessage := ptlcUnlockMessageForContract(z, types.HtlcContract, definition.PointTypeED25519, ptlcId, g.User2.Address)
++	wrongContractSignature := g.User2.Sign(wrongContractMessage)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			ptlcId,
++			wrongContractSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, constants.ErrInvalidPointSignature)
++	z.InsertNewMomentum()
++
++	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 10*g.Zexp)
++}
++
+ func TestPtlc_reclaim(t *testing.T) {
+ 	z := mock.NewMockZenon(t)
+ 	ptlcApi := embedded.NewPtlcApi(z)
+@@ -1063,6 +1137,20 @@ func TestPtlc_unlockBIP340(t *testing.T) {
+ 	}).Error(t, constants.ErrInvalidPointSignature)
+ 	z.InsertNewMomentum()
+ 
++	oldMessage := crypto.Hash(common.JoinBytes(ptlcId.Bytes(), g.User2.Address.Bytes()))
++	oldSignature, _ := schnorr.Sign(prv2, oldMessage)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			ptlcId,
++			oldSignature.Serialize(),
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0 * g.Zexp),
++	}).Error(t, constants.ErrInvalidPointSignature)
++	z.InsertNewMomentum()
++
+ 	// user2 unlocks with correct signature
+ 	signature, _ := schnorr.Sign(prv2, mh)
+ 	sig := signature.Serialize()
+@@ -1184,3 +1272,106 @@ func TestPtlc_proxyUnlockBIP340(t *testing.T) {
+ 	z.ExpectBalance(g.User2.Address, types.ZnnTokenStandard, (8000+10)*g.Zexp)
+ 	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 0)
+ }
++
++func TestPtlc_proxyUnlockBIP340_lifecycle(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	prv2, pub2 := btcec.PrivKeyFromBytes(g.Secp2PrvKey)
++	pub2bip340 := schnorr.SerializePubKey(pub2)
++
++	expiredId := createBIP340Ptlc(t, z, pub2bip340, int64(genesisTimestamp+300))
++	z.InsertMomentumsTo(30)
++	expiredSignature := signBIP340Unlock(t, z, prv2, expiredId, g.User2.Address)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User3.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
++			expiredId,
++			g.User2.Address,
++			expiredSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, constants.ErrExpired)
++	z.InsertNewMomentum()
++
++	reclaimedId := createBIP340Ptlc(t, z, pub2bip340, int64(genesisTimestamp+330))
++	reclaimedSignature := signBIP340Unlock(t, z, prv2, reclaimedId, g.User2.Address)
++	z.InsertMomentumsTo(33)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User1.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName,
++			reclaimedId,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, nil)
++	z.InsertNewMomentum()
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User3.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
++			reclaimedId,
++			g.User2.Address,
++			reclaimedSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, constants.ErrDataNonExistent)
++	z.InsertNewMomentum()
++
++	proxyFirstId := createBIP340Ptlc(t, z, pub2bip340, int64(genesisTimestamp+1000))
++	proxyFirstSignature := signBIP340Unlock(t, z, prv2, proxyFirstId, g.User2.Address)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User3.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
++			proxyFirstId,
++			g.User2.Address,
++			proxyFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, nil)
++	z.InsertNewMomentum()
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			proxyFirstId,
++			proxyFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, constants.ErrDataNonExistent)
++	z.InsertNewMomentum()
++
++	directFirstId := createBIP340Ptlc(t, z, pub2bip340, int64(genesisTimestamp+1000))
++	directFirstSignature := signBIP340Unlock(t, z, prv2, directFirstId, g.User2.Address)
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			directFirstId,
++			directFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, nil)
++	z.InsertNewMomentum()
++	defer z.CallContract(&nom.AccountBlock{
++		Address:   g.User3.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
++			directFirstId,
++			g.User2.Address,
++			directFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	}).Error(t, constants.ErrDataNonExistent)
++	z.InsertNewMomentum()
++}
+-- 
+2.53.0.windows.2
+

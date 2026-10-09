@@ -1,0 +1,46 @@
+From 3b475afaad843513e5c2a862022be014b1b9072e Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Thu, 8 Oct 2026 00:22:08 -0400
+Subject: [PATCH 2/2] ptlc: cross-implementation tests against go-zenon's
+ unlock message and the Go adaptor
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ test/crypto/ptlc_unlock_message_test.dart | 25 +++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+ create mode 100644 test/crypto/ptlc_unlock_message_test.dart
+
+diff --git a/test/crypto/ptlc_unlock_message_test.dart b/test/crypto/ptlc_unlock_message_test.dart
+new file mode 100644
+index 0000000..e6fbe27
+--- /dev/null
++++ b/test/crypto/ptlc_unlock_message_test.dart
+@@ -0,0 +1,25 @@
++import 'dart:convert';
++import 'dart:io';
++
++import 'package:test/test.dart';
++import 'package:znn_sdk_dart/znn_sdk_dart.dart';
++
++/// Known answers produced by go-zenon's own GetPtlcUnlockMessage on the
++/// ptlc/release-0.0.9 branch (zenon-ptlc/scenarios/nom-to-btc/cmd/vectors).
++/// A client that signs a different message makes witnesses the contract
++/// refuses, so this is the one test that ties the SDK to the chain.
++void main() {
++  final path = Platform.environment['PTLC_VECTORS'] ??
++      '../zenon-ptlc/test/vectors/ptlc/unlock-message.json';
++  test('unlock message matches go-zenon', () {
++    final rows = jsonDecode(File(path).readAsStringSync()) as List;
++    expect(rows.length, greaterThan(10));
++    for (final r in rows) {
++      final got = PtlcApi.unlockMessage(r['chainIdentifier'] as int,
++          r['pointType'] as int, Hash.parse(r['id']), Address.parse(r['destination']));
++      expect(got.map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
++          r['message'],
++          reason: '${r['chainIdentifier']}/${r['pointType']}/${r['destination']}');
++    }
++  });
++}
+-- 
+2.53.0.windows.2
+

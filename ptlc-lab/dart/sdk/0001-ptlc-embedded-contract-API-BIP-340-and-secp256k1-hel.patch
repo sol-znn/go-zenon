@@ -1,0 +1,780 @@
+From 0f9919e2008996041419a124b54db0f6c71a43d5 Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Wed, 7 Oct 2026 23:43:31 -0400
+Subject: [PATCH 1/2] ptlc: embedded contract API, BIP-340 and secp256k1
+ helpers, adaptor signatures
+
+Definitions.ptlc and PtlcApi mirror the htlc ones for the ptlc contract of
+go-zenon branch ptlc/release-0.0.9 (Create with a destination, Unlock,
+ProxyUnlock, Reclaim, getById, and the domain-separated unlock message).
+Secp256k1 and Bip340 are built on pointycastle's curve, which the SDK
+already depends on: BIP-340 signing and verification pass the official
+vectors; the single-signer adaptor construction is tested in all four key
+and nonce parity cases and cross-checked by the Go side of zenon-ptlc.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ lib/src/api/embedded.dart             |   4 +
+ lib/src/api/embedded/embedded.dart    |   1 +
+ lib/src/api/embedded/ptlc.dart        |  82 +++++++++++
+ lib/src/crypto/bip340.dart            | 190 ++++++++++++++++++++++++++
+ lib/src/crypto/crypto.dart            |   3 +
+ lib/src/crypto/secp256k1.dart         | 111 +++++++++++++++
+ lib/src/embedded/definitions.dart     |   8 ++
+ lib/src/model/embedded.dart           |   1 +
+ lib/src/model/embedded/ptlc.dart      |  80 +++++++++++
+ lib/src/model/primitives/address.dart |   3 +
+ test/crypto/adaptor_vectors_test.dart |  43 ++++++
+ test/crypto/bip340_test.dart          |  86 ++++++++++++
+ 12 files changed, 612 insertions(+)
+ create mode 100644 lib/src/api/embedded/ptlc.dart
+ create mode 100644 lib/src/crypto/bip340.dart
+ create mode 100644 lib/src/crypto/secp256k1.dart
+ create mode 100644 lib/src/model/embedded/ptlc.dart
+ create mode 100644 test/crypto/adaptor_vectors_test.dart
+ create mode 100644 test/crypto/bip340_test.dart
+
+diff --git a/lib/src/api/embedded.dart b/lib/src/api/embedded.dart
+index 06ff2c6..befbe76 100644
+--- a/lib/src/api/embedded.dart
++++ b/lib/src/api/embedded.dart
+@@ -1,6 +1,7 @@
+ import 'package:znn_sdk_dart/src/api/embedded/accelerator.dart';
+ import 'package:znn_sdk_dart/src/api/embedded/bridge.dart';
+ import 'package:znn_sdk_dart/src/api/embedded/htlc.dart';
++import 'package:znn_sdk_dart/src/api/embedded/ptlc.dart';
+ import 'package:znn_sdk_dart/src/api/embedded/liquidity.dart';
+ import 'package:znn_sdk_dart/src/api/embedded/spork.dart';
+ import 'package:znn_sdk_dart/src/api/embedded/pillar.dart';
+@@ -25,6 +26,7 @@ class EmbeddedApi {
+   late LiquidityApi liquidity;
+   late SporkApi spork;
+   late HtlcApi htlc;
++  late PtlcApi ptlc;
+ 
+   void setClient(Client client) {
+     this.client = client;
+@@ -39,6 +41,7 @@ class EmbeddedApi {
+     liquidity.setClient(client);
+     spork.setClient(client);
+     htlc.setClient(client);
++    ptlc.setClient(client);
+   }
+ 
+   EmbeddedApi() {
+@@ -53,5 +56,6 @@ class EmbeddedApi {
+     liquidity = LiquidityApi();
+     spork = SporkApi();
+     htlc = HtlcApi();
++    ptlc = PtlcApi();
+   }
+ }
+diff --git a/lib/src/api/embedded/embedded.dart b/lib/src/api/embedded/embedded.dart
+index 4c3a665..390d341 100644
+--- a/lib/src/api/embedded/embedded.dart
++++ b/lib/src/api/embedded/embedded.dart
+@@ -1,6 +1,7 @@
+ export 'accelerator.dart';
+ export 'bridge.dart';
+ export 'htlc.dart';
++export 'ptlc.dart';
+ export 'liquidity.dart';
+ export 'pillar.dart';
+ export 'plasma.dart';
+diff --git a/lib/src/api/embedded/ptlc.dart b/lib/src/api/embedded/ptlc.dart
+new file mode 100644
+index 0000000..f1ec693
+--- /dev/null
++++ b/lib/src/api/embedded/ptlc.dart
+@@ -0,0 +1,82 @@
++import 'dart:typed_data';
++
++import 'package:znn_sdk_dart/src/client/client.dart';
++import 'package:znn_sdk_dart/src/crypto/crypto.dart';
++import 'package:znn_sdk_dart/src/embedded/embedded.dart';
++import 'package:znn_sdk_dart/src/model/model.dart';
++import 'package:znn_sdk_dart/src/model/primitives.dart';
++
++class PtlcApi {
++  late Client client;
++
++  void setClient(Client client) {
++    this.client = client;
++  }
++
++  // RPC
++  Future<PtlcInfo> getById(Hash id) async {
++    var response =
++        await client.sendRequest('embedded.ptlc.getById', [id.toString()]);
++    return PtlcInfo.fromJson(response!);
++  }
++
++  // Contract methods
++
++  /// Locks [amount] of [token] to [pointLock] until [expirationTime]. A point
++  /// of type [PtlcPointType.secp256k1Point] must name a [destination]; a key
++  /// type may pass [emptyAddress] to let the signature choose it.
++  AccountBlockTemplate create(Token token, BigInt amount, int expirationTime,
++      int pointType, List<int> pointLock, Address destination) {
++    return AccountBlockTemplate.callContract(
++        ptlcAddress,
++        token.tokenStandard,
++        amount,
++        Definitions.ptlc.encodeFunction(
++            'Create', [expirationTime, pointType, pointLock, destination]));
++  }
++
++  AccountBlockTemplate reclaim(Hash id) {
++    return AccountBlockTemplate.callContract(ptlcAddress, znnZts, BigInt.zero,
++        Definitions.ptlc.encodeFunction('Reclaim', [id.getBytes()]));
++  }
++
++  /// Unlocks to the caller. [witness] is a signature over the unlock message
++  /// for a key type, or the scalar for a point type.
++  AccountBlockTemplate unlock(Hash id, List<int> witness) {
++    return AccountBlockTemplate.callContract(ptlcAddress, znnZts, BigInt.zero,
++        Definitions.ptlc.encodeFunction('Unlock', [id.getBytes(), witness]));
++  }
++
++  /// Unlocks to [destination] on anyone's behalf. For a key type the witness
++  /// must have been signed over this destination.
++  AccountBlockTemplate proxyUnlock(
++      Hash id, Address destination, List<int> witness) {
++    return AccountBlockTemplate.callContract(
++        ptlcAddress,
++        znnZts,
++        BigInt.zero,
++        Definitions.ptlc.encodeFunction(
++            'ProxyUnlock', [id.getBytes(), destination, witness]));
++  }
++
++  // Unlock message
++
++  /// The message a key-type witness signs: SHA3-256 over the domain string
++  /// `zenon-ptlc-unlock:v1`, the chain identifier (8 bytes, big-endian), the
++  /// contract address (20 bytes), the point type (1 byte), the id (32 bytes)
++  /// and the destination (20 bytes). The chain identifier is the frontier
++  /// momentum's.
++  static List<int> unlockMessage(
++      int chainIdentifier, int pointType, Hash id, Address destination) {
++    final chain = Uint8List(8);
++    ByteData.view(chain.buffer).setUint64(0, chainIdentifier, Endian.big);
++    return Crypto.digest([
++      ...'zenon-ptlc-unlock:v1'.codeUnits,
++      ...chain,
++      ...ptlcAddress.getBytes()!,
++      pointType,
++      ...id.getBytes()!,
++      ...destination.getBytes()!,
++    ]);
++  }
++}
+diff --git a/lib/src/crypto/bip340.dart b/lib/src/crypto/bip340.dart
+new file mode 100644
+index 0000000..0b631b5
+--- /dev/null
++++ b/lib/src/crypto/bip340.dart
+@@ -0,0 +1,190 @@
++import 'dart:typed_data';
++
++import 'package:pointycastle/digests/sha256.dart';
++import 'package:znn_sdk_dart/src/crypto/secp256k1.dart';
++
++/// BIP-340 Schnorr signatures over secp256k1, and the single-signer adaptor
++/// construction on top of them.
++///
++/// The signing algorithm is the BIP's reference algorithm, step for step, so
++/// that the official test vectors pass unchanged. The adaptor construction is
++/// the one in Blockstream's scriptless-scripts atomic swap note and
++/// libsecp256k1-zkp's `schnorr_adaptor` module: the pre-signature nonce is
++/// `R = k·G + T`, the pre-signature scalar is `s' = k + e·d`, and the completed
++/// signature is `s = s' + t` when R has even y, `s' - t` otherwise. Whoever
++/// holds the pre-signature and sees the completed signature learns `t`.
++class Bip340 {
++  static const String _auxTag = 'BIP0340/aux';
++  static const String _nonceTag = 'BIP0340/nonce';
++  static const String _challengeTag = 'BIP0340/challenge';
++
++  static Uint8List sha256(List<int> data) =>
++      SHA256Digest().process(Uint8List.fromList(data));
++
++  /// SHA256(SHA256(tag) ‖ SHA256(tag) ‖ msg).
++  static Uint8List taggedHash(String tag, List<int> msg) {
++    final tagHash = sha256(Uint8List.fromList(tag.codeUnits));
++    return sha256([...tagHash, ...tagHash, ...msg]);
++  }
++
++  /// The x-only public key of a 32-byte secret key.
++  static Uint8List publicKey(List<int> secretKey) {
++    final d = _secret(secretKey);
++    return Secp256k1.xOnly((Secp256k1.g * d)!);
++  }
++
++  /// Signs a message of any length (BIP-340 since its 2023 revision). `auxRand`
++  /// must be 32 bytes and should be fresh
++  /// per signature; the BIP's vectors use fixed values, which is why it is a
++  /// parameter.
++  static Uint8List sign(
++      List<int> secretKey, List<int> message, List<int> auxRand) {
++    _check32(auxRand, 'auxRand');
++    final d0 = _secret(secretKey);
++    final pPoint = (Secp256k1.g * d0)!;
++    final d = Secp256k1.hasEvenY(pPoint) ? d0 : Secp256k1.n - d0;
++    final pBytes = Secp256k1.xOnly(pPoint);
++
++    final k = _nonce(d, pBytes, message, auxRand);
++    final rPoint = (Secp256k1.g * k)!;
++    final kFinal = Secp256k1.hasEvenY(rPoint) ? k : Secp256k1.n - k;
++    final rBytes = Secp256k1.xOnly(rPoint);
++
++    final e = _challenge(rBytes, pBytes, message);
++    final s = (kFinal + e * d) % Secp256k1.n;
++    final signature = Uint8List.fromList([...rBytes, ...Secp256k1.scalarToBytes(s)]);
++    if (!verify(pBytes, message, signature)) {
++      throw StateError('the signature does not verify');
++    }
++    return signature;
++  }
++
++  /// Verifies a 64-byte signature by an x-only public key over a message of
++  /// any length. Any malformed input is simply an invalid signature.
++  static bool verify(List<int> publicKey, List<int> message, List<int> signature) {
++    if (publicKey.length != 32 || signature.length != 64) {
++      return false;
++    }
++    final pPoint = Secp256k1.liftX(publicKey);
++    if (pPoint == null) return false;
++    final r = Secp256k1.bytesToBigInt(signature.sublist(0, 32));
++    if (r >= Secp256k1.p) return false;
++    final s = Secp256k1.bytesToBigInt(signature.sublist(32));
++    if (s >= Secp256k1.n) return false;
++    final e = _challenge(signature.sublist(0, 32), publicKey, message);
++    final rPoint = ((Secp256k1.g * s)! + (pPoint * (Secp256k1.n - e))!)!;
++    if (rPoint.isInfinity) return false;
++    if (!Secp256k1.hasEvenY(rPoint)) return false;
++    return rPoint.x!.toBigInteger()! == r;
++  }
++
++  /// Produces an adaptor pre-signature on the point `adaptor` (33 compressed
++  /// bytes): 33 bytes of R (compressed, so that its parity travels with it)
++  /// followed by 32 bytes of s'. The pre-signature is useless as a signature
++  /// and reveals nothing about the secret behind `adaptor`.
++  static Uint8List adaptorSign(List<int> secretKey, List<int> message,
++      List<int> adaptor, List<int> auxRand) {
++    _check32(auxRand, 'auxRand');
++    final tPoint = Secp256k1.parseCompressed(adaptor);
++    if (tPoint == null) throw ArgumentError('adaptor is not a compressed point');
++    final d0 = _secret(secretKey);
++    final pPoint = (Secp256k1.g * d0)!;
++    final d = Secp256k1.hasEvenY(pPoint) ? d0 : Secp256k1.n - d0;
++    final pBytes = Secp256k1.xOnly(pPoint);
++
++    // The adaptor point is mixed into the auxiliary randomness so that the
++    // same key, message and aux never produce the same k for two adaptors.
++    final aux = taggedHash('zenon/ptlc/adaptor-aux', [...auxRand, ...adaptor]);
++    final k0 = _nonce(d, pBytes, message, aux);
++    final rPrime = (Secp256k1.g * k0)!;
++    final rPoint = (rPrime + tPoint)!;
++    if (rPoint.isInfinity) throw StateError('nonce cancels the adaptor');
++    final k = Secp256k1.hasEvenY(rPoint) ? k0 : Secp256k1.n - k0;
++    final e = _challenge(Secp256k1.xOnly(rPoint), pBytes, message);
++    final sPrime = (k + e * d) % Secp256k1.n;
++    final presig = Uint8List.fromList(
++        [...Secp256k1.compress(rPoint), ...Secp256k1.scalarToBytes(sPrime)]);
++    if (!adaptorVerify(pBytes, message, adaptor, presig)) {
++      throw StateError('the pre-signature does not verify');
++    }
++    return presig;
++  }
++
++  /// Checks that a pre-signature was made by `publicKey` over `message` on the
++  /// adaptor point: s'·G must equal (R - T) + e·P when R has even y, and
++  /// (T - R) + e·P otherwise.
++  static bool adaptorVerify(List<int> publicKey, List<int> message,
++      List<int> adaptor, List<int> presig) {
++    if (publicKey.length != 32 || presig.length != 65) {
++      return false;
++    }
++    final pPoint = Secp256k1.liftX(publicKey);
++    final tPoint = Secp256k1.parseCompressed(adaptor);
++    final rPoint = Secp256k1.parseCompressed(presig.sublist(0, 33));
++    if (pPoint == null || tPoint == null || rPoint == null) return false;
++    final sPrime = Secp256k1.bytesToBigInt(presig.sublist(33));
++    if (sPrime >= Secp256k1.n) return false;
++    final e = _challenge(Secp256k1.xOnly(rPoint), publicKey, message);
++    final ePoint = (pPoint * e)!;
++    final expected = Secp256k1.hasEvenY(rPoint)
++        ? ((rPoint - tPoint)! + ePoint)!
++        : ((tPoint - rPoint)! + ePoint)!;
++    final actual = (Secp256k1.g * sPrime)!;
++    return !expected.isInfinity && expected == actual;
++  }
++
++  /// Completes a pre-signature with the adaptor secret, giving an ordinary
++  /// BIP-340 signature.
++  static Uint8List adaptorComplete(List<int> presig, BigInt secret) {
++    final rPoint = Secp256k1.parseCompressed(presig.sublist(0, 33));
++    if (rPoint == null) throw ArgumentError('malformed pre-signature');
++    final sPrime = Secp256k1.bytesToBigInt(presig.sublist(33));
++    final s = Secp256k1.hasEvenY(rPoint)
++        ? (sPrime + secret) % Secp256k1.n
++        : (sPrime - secret) % Secp256k1.n;
++    return Uint8List.fromList(
++        [...Secp256k1.xOnly(rPoint), ...Secp256k1.scalarToBytes(s)]);
++  }
++
++  /// Recovers the adaptor secret from a pre-signature and the completed
++  /// signature. The caller checks that the result is the discrete log of the
++  /// adaptor point; a signature that was not completed from this
++  /// pre-signature gives garbage, not an error.
++  static BigInt adaptorExtract(List<int> presig, List<int> signature) {
++    final rPoint = Secp256k1.parseCompressed(presig.sublist(0, 33));
++    if (rPoint == null) throw ArgumentError('malformed pre-signature');
++    if (signature.length != 64) throw ArgumentError('malformed signature');
++    final sPrime = Secp256k1.bytesToBigInt(presig.sublist(33));
++    final s = Secp256k1.bytesToBigInt(signature.sublist(32));
++    return Secp256k1.hasEvenY(rPoint)
++        ? (s - sPrime) % Secp256k1.n
++        : (sPrime - s) % Secp256k1.n;
++  }
++
++  static BigInt _secret(List<int> secretKey) {
++    final d = Secp256k1.parseScalar(secretKey);
++    if (d == null) throw ArgumentError('secret key is not a canonical scalar');
++    return d;
++  }
++
++  static BigInt _nonce(BigInt d, List<int> pBytes, List<int> message, List<int> auxRand) {
++    final tBytes = Secp256k1.scalarToBytes(d);
++    final auxHash = taggedHash(_auxTag, auxRand);
++    final t = Uint8List(32);
++    for (var i = 0; i < 32; i++) {
++      t[i] = tBytes[i] ^ auxHash[i];
++    }
++    final rand = taggedHash(_nonceTag, [...t, ...pBytes, ...message]);
++    final k = Secp256k1.bytesToBigInt(rand) % Secp256k1.n;
++    if (k == BigInt.zero) throw StateError('zero nonce');
++    return k;
++  }
++
++  static BigInt _challenge(List<int> rBytes, List<int> pBytes, List<int> message) =>
++      Secp256k1.bytesToBigInt(taggedHash(_challengeTag, [...rBytes, ...pBytes, ...message])) %
++      Secp256k1.n;
++
++  static void _check32(List<int> value, String name) {
++    if (value.length != 32) throw ArgumentError('$name must be 32 bytes');
++  }
++}
+diff --git a/lib/src/crypto/crypto.dart b/lib/src/crypto/crypto.dart
+index 5f23901..71350ef 100644
+--- a/lib/src/crypto/crypto.dart
++++ b/lib/src/crypto/crypto.dart
+@@ -1,3 +1,6 @@
++export 'package:znn_sdk_dart/src/crypto/bip340.dart';
++export 'package:znn_sdk_dart/src/crypto/secp256k1.dart';
++
+ import 'dart:typed_data';
+ 
+ import 'package:cryptography/cryptography.dart';
+diff --git a/lib/src/crypto/secp256k1.dart b/lib/src/crypto/secp256k1.dart
+new file mode 100644
+index 0000000..a42baaa
+--- /dev/null
++++ b/lib/src/crypto/secp256k1.dart
+@@ -0,0 +1,111 @@
++import 'dart:typed_data';
++
++import 'package:pointycastle/ecc/api.dart';
++import 'package:pointycastle/ecc/curves/secp256k1.dart';
++
++/// secp256k1 scalar and point arithmetic for the PTLC point types.
++///
++/// Built on pointycastle's curve parameters, which the SDK already depends on,
++/// because no pub package implements BIP-340 or scalar-to-point helpers and a
++/// second big-number library would be a second thing to audit. Everything here
++/// is plain group arithmetic; the signature scheme is in `bip340.dart`.
++class Secp256k1 {
++  static final ECDomainParameters params = ECCurve_secp256k1();
++
++  /// The group order n.
++  static final BigInt n = params.n;
++
++  /// The field prime p = 2^256 - 2^32 - 977. pointycastle's generic curve
++  /// interface does not expose it, and secp256k1's is fixed.
++  static final BigInt p = BigInt.parse(
++      'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F',
++      radix: 16);
++
++  /// The generator G.
++  static ECPoint get g => params.G;
++
++  /// A 32-byte big-endian encoding of a scalar.
++  static Uint8List scalarToBytes(BigInt s) => bigIntToBytes(s, 32);
++
++  /// The scalar encoded by 32 big-endian bytes, or null when the bytes are not
++  /// a canonical scalar: not 32 bytes, zero, or at or above n. One secret has
++  /// exactly one encoding, which is what the contract requires of a witness.
++  static BigInt? parseScalar(List<int> bytes) {
++    if (bytes.length != 32) return null;
++    final s = bytesToBigInt(bytes);
++    if (s == BigInt.zero || s >= n) return null;
++    return s;
++  }
++
++  /// t·G as a 33-byte compressed point: the lock a scalar witness opens.
++  static Uint8List scalarToPoint(BigInt t) =>
++      Uint8List.fromList((g * (t % n))!.getEncoded(true));
++
++  /// The point encoded by 33 compressed bytes, or null when the bytes do not
++  /// encode a point on the curve with an 0x02 or 0x03 prefix.
++  static ECPoint? parseCompressed(List<int> bytes) {
++    if (bytes.length != 33 || (bytes[0] != 0x02 && bytes[0] != 0x03)) {
++      return null;
++    }
++    try {
++      final point = params.curve.decodePoint(bytes);
++      if (point == null || point.isInfinity) return null;
++      return point;
++    } catch (_) {
++      return null;
++    }
++  }
++
++  /// The even-y point with the given x coordinate (BIP-340 lift_x), or null.
++  static ECPoint? liftX(List<int> xOnly) {
++    if (xOnly.length != 32) return null;
++    if (bytesToBigInt(xOnly) >= p) return null;
++    return parseCompressed([0x02, ...xOnly]);
++  }
++
++  /// The 32-byte x coordinate of a point.
++  static Uint8List xOnly(ECPoint point) =>
++      bigIntToBytes(point.x!.toBigInteger()!, 32);
++
++  /// Whether a point's y coordinate is even, which is the parity BIP-340 fixes
++  /// for public keys and nonces.
++  static bool hasEvenY(ECPoint point) =>
++      point.y!.toBigInteger()!.isEven;
++
++  /// Encodes a point as 33 compressed bytes.
++  static Uint8List compress(ECPoint point) =>
++      Uint8List.fromList(point.getEncoded(true));
++
++  /// Adds a scalar tweak to a point: T + d·G. This is what makes two legs of a
++  /// swap show different points while one secret opens both.
++  static Uint8List tweakPoint(List<int> compressed, BigInt d) {
++    final t = parseCompressed(compressed);
++    if (t == null) throw ArgumentError('not a compressed secp256k1 point');
++    final sum = (t + (g * (d % n)))!;
++    if (sum.isInfinity) throw ArgumentError('tweak cancels the point');
++    return compress(sum);
++  }
++
++  /// Adds a scalar tweak to a scalar: (t + d) mod n.
++  static BigInt tweakScalar(BigInt t, BigInt d) => (t + d) % n;
++
++  static Uint8List bigIntToBytes(BigInt value, int length) {
++    if (value.isNegative) throw ArgumentError('negative');
++    final out = Uint8List(length);
++    var v = value;
++    for (var i = length - 1; i >= 0; i--) {
++      out[i] = (v & BigInt.from(0xff)).toInt();
++      v = v >> 8;
++    }
++    if (v != BigInt.zero) throw ArgumentError('value does not fit');
++    return out;
++  }
++
++  static BigInt bytesToBigInt(List<int> bytes) {
++    var v = BigInt.zero;
++    for (final b in bytes) {
++      v = (v << 8) | BigInt.from(b & 0xff);
++    }
++    return v;
++  }
++}
+diff --git a/lib/src/embedded/definitions.dart b/lib/src/embedded/definitions.dart
+index dc7d9d9..e86ceb9 100644
+--- a/lib/src/embedded/definitions.dart
++++ b/lib/src/embedded/definitions.dart
+@@ -64,6 +64,13 @@ class Definitions {
+     {"type":"function","name":"AllowProxyUnlock","inputs":[]}
+   ]''';
+ 
++  static final String _ptlcDefinition = '''[
++    {"type":"function","name":"Create", "inputs":[{"name":"expirationTime","type":"int64"},{"name":"pointType","type":"uint8"},{"name":"pointLock","type":"bytes"},{"name":"destination","type":"address"}]},
++    {"type":"function","name":"Reclaim","inputs":[{"name":"id","type":"hash"}]},
++    {"type":"function","name":"Unlock","inputs":[{"name":"id","type":"hash"},{"name":"signature","type":"bytes"}]},
++    {"type":"function","name":"ProxyUnlock","inputs":[{"name":"id","type":"hash"},{"name":"destination","type":"address"},{"name":"signature","type":"bytes"}]}
++  ]''';
++
+   static final String _bridgeDefinition = '''[
+     {"type":"function","name":"WrapToken","inputs":[{"name":"networkClass","type":"uint32"},{"name":"chainId","type":"uint32"},{"name":"toAddress","type":"string"}]},
+     {"type":"function","name":"UpdateWrapRequest","inputs":[{"name":"id","type":"hash"},{"name":"signature","type":"string"}]},
+@@ -129,5 +136,6 @@ class Definitions {
+   static final Abi liquidity = Abi.fromJson(_liquidityDefinition);
+   static final Abi spork = Abi.fromJson(_sporkDefinition);
+   static final Abi htlc = Abi.fromJson(_htlcDefinition);
++  static final Abi ptlc = Abi.fromJson(_ptlcDefinition);
+   static final Abi common = Abi.fromJson(_commonDefinition);
+ }
+diff --git a/lib/src/model/embedded.dart b/lib/src/model/embedded.dart
+index 7a69d75..42d59ac 100644
+--- a/lib/src/model/embedded.dart
++++ b/lib/src/model/embedded.dart
+@@ -9,3 +9,4 @@ export 'embedded/bridge.dart';
+ export 'embedded/liquidity.dart';
+ export 'embedded/spork.dart';
+ export 'embedded/htlc.dart';
++export 'embedded/ptlc.dart';
+diff --git a/lib/src/model/embedded/ptlc.dart b/lib/src/model/embedded/ptlc.dart
+new file mode 100644
+index 0000000..712a06c
+--- /dev/null
++++ b/lib/src/model/embedded/ptlc.dart
+@@ -0,0 +1,80 @@
++import 'package:znn_sdk_dart/src/model/primitives.dart';
++import 'package:znn_sdk_dart/src/utils/utils.dart';
++
++/// The point types of the ptlc contract. The two key types are opened by a
++/// signature over the unlock message; the point type is opened by the scalar
++/// behind the point, and its entry names the one address an unlock may pay.
++class PtlcPointType {
++  static const int ed25519 = 0;
++  static const int bip340 = 1;
++  static const int secp256k1Point = 2;
++
++  static const Map<int, int> lockSizes = {
++    ed25519: 32,
++    bip340: 32,
++    secp256k1Point: 33
++  };
++  static const Map<int, int> witnessSizes = {
++    ed25519: 64,
++    bip340: 64,
++    secp256k1Point: 32
++  };
++
++  static String name(int pointType) {
++    switch (pointType) {
++      case ed25519:
++        return 'ED25519 key';
++      case bip340:
++        return 'BIP-340 key';
++      case secp256k1Point:
++        return 'secp256k1 point';
++      default:
++        return 'unknown ($pointType)';
++    }
++  }
++}
++
++class PtlcInfo {
++  Hash id;
++  Address timeLocked;
++  TokenStandard tokenStandard;
++  BigInt amount;
++  int expirationTime;
++  int pointType;
++  List<int> pointLock;
++  Address destination;
++
++  PtlcInfo(
++      {required this.id,
++      required this.timeLocked,
++      required this.tokenStandard,
++      required this.amount,
++      required this.expirationTime,
++      required this.pointType,
++      required this.pointLock,
++      required this.destination});
++
++  PtlcInfo.fromJson(Map<String, dynamic> json)
++      : id = Hash.parse(json['id']),
++        timeLocked = Address.parse(json['timeLocked']),
++        tokenStandard = TokenStandard.parse(json['tokenStandard']),
++        amount = BigInt.parse(json['amount'].toString()),
++        expirationTime = json['expirationTime'],
++        pointType = json['pointType'],
++        pointLock = BytesUtils.base64ToBytes(json['pointLock']) ?? [],
++        destination = Address.parse(json['destination']);
++
++  /// Whether the entry pays only one address.
++  bool get hasFixedDestination => destination != emptyAddress;
++
++  Map<String, dynamic> toJson() => {
++        'id': id.toString(),
++        'timeLocked': timeLocked.toString(),
++        'tokenStandard': tokenStandard.toString(),
++        'amount': amount.toString(),
++        'expirationTime': expirationTime,
++        'pointType': pointType,
++        'pointLock': BytesUtils.bytesToBase64(pointLock),
++        'destination': destination.toString(),
++      };
++}
+diff --git a/lib/src/model/primitives/address.dart b/lib/src/model/primitives/address.dart
+index 210e88e..0ee785a 100644
+--- a/lib/src/model/primitives/address.dart
++++ b/lib/src/model/primitives/address.dart
+@@ -23,6 +23,8 @@ final Address acceleratorAddress =
+     Address.parse('z1qxemdeddedxaccelerat0rxxxxxxxxxxp4tk22');
+ final Address htlcAddress =
+     Address.parse('z1qxemdeddedxhtlcxxxxxxxxxxxxxxxxxygecvw');
++final Address ptlcAddress =
++    Address.parse('z1qxemdeddedxptlcxxxxxxxxxxxxxxxxx6lqady');
+ final Address bridgeAddress =
+     Address.parse('z1qxemdeddedxdrydgexxxxxxxxxxxxxxxmqgr0d');
+ final Address liquidityAddress =
+@@ -40,6 +42,7 @@ final List<Address> embeddedContractAddresses = [
+   liquidityAddress,
+   sporkAddress,
+   htlcAddress,
++  ptlcAddress,
+ ];
+ 
+ class Address {
+diff --git a/test/crypto/adaptor_vectors_test.dart b/test/crypto/adaptor_vectors_test.dart
+new file mode 100644
+index 0000000..aad68f5
+--- /dev/null
++++ b/test/crypto/adaptor_vectors_test.dart
+@@ -0,0 +1,43 @@
++import 'dart:convert';
++import 'dart:io';
++import 'dart:typed_data';
++
++import 'package:test/test.dart';
++import 'package:znn_sdk_dart/src/crypto/bip340.dart';
++import 'package:znn_sdk_dart/src/crypto/secp256k1.dart';
++
++String hx(List<int> b) => b.map((e) => e.toRadixString(16).padLeft(2, '0')).join();
++
++/// Writes adaptor pre-signatures made here to a file the Go scenario's test
++/// reads (zenon-ptlc/scenarios/nom-to-btc/adaptor), so the two
++/// implementations are checked against each other, not only against
++/// themselves. Set ADAPTOR_VECTORS_OUT to choose the path.
++void main() {
++  test('write adaptor vectors for the Go side', () {
++    final out = Platform.environment['ADAPTOR_VECTORS_OUT'] ??
++        '../zenon-ptlc/test/vectors/adaptor/dart-vectors.json';
++    final rows = <Map<String, String>>[];
++    for (var i = 1; i <= 16; i++) {
++      final sk = Secp256k1.scalarToBytes(BigInt.from(777 + i * 6007));
++      final pk = Bip340.publicKey(sk);
++      final t = BigInt.from(9000 + i * 7919);
++      final T = Secp256k1.scalarToPoint(t);
++      final msg = Bip340.sha256([0x42, i]);
++      final aux = Bip340.sha256([0x43, i]);
++      final presig = Bip340.adaptorSign(sk, msg, T, aux);
++      final sig = Bip340.adaptorComplete(presig, t);
++      expect(Bip340.verify(pk, msg, sig), isTrue);
++      rows.add({
++        'secretKey': hx(sk),
++        'publicKey': hx(pk),
++        'message': hx(msg),
++        'secret': hx(Secp256k1.scalarToBytes(t)),
++        'adaptor': hx(T),
++        'preSignature': hx(presig),
++        'signature': hx(sig),
++      });
++    }
++    File(out).writeAsStringSync(const JsonEncoder.withIndent(' ').convert(rows));
++    expect(Uint8List(0), isEmpty);
++  });
++}
+diff --git a/test/crypto/bip340_test.dart b/test/crypto/bip340_test.dart
+new file mode 100644
+index 0000000..2ca97ab
+--- /dev/null
++++ b/test/crypto/bip340_test.dart
+@@ -0,0 +1,86 @@
++import 'dart:convert';
++import 'dart:io';
++import 'dart:typed_data';
++
++import 'package:test/test.dart';
++import 'package:znn_sdk_dart/src/crypto/bip340.dart';
++import 'package:znn_sdk_dart/src/crypto/secp256k1.dart';
++
++Uint8List hex(String s) {
++  final out = Uint8List(s.length ~/ 2);
++  for (var i = 0; i < out.length; i++) {
++    out[i] = int.parse(s.substring(2 * i, 2 * i + 2), radix: 16);
++  }
++  return out;
++}
++
++void main() {
++  // The official BIP-340 vectors, copied unchanged from bitcoin/bips at
++  // 927b6de9 (zenon-ptlc/test/vectors/bip340/test-vectors.csv). The path is
++  // resolved relative to this package so the two trees share one file.
++  final csvPath = Platform.environment['BIP340_VECTORS'] ??
++      '../zenon-ptlc/test/vectors/bip340/test-vectors.csv';
++
++  test('BIP-340 official vectors', () {
++    final lines = const LineSplitter().convert(File(csvPath).readAsStringSync());
++    expect(lines.first.startsWith('index,secret key,public key'), isTrue);
++    var signed = 0, verified = 0, rejected = 0;
++    for (final line in lines.skip(1)) {
++      if (line.trim().isEmpty) continue;
++      final f = line.split(',');
++      final sk = f[1], pk = hex(f[2]), aux = f[3], msg = hex(f[4]), sig = hex(f[5]);
++      final expected = f[6] == 'TRUE';
++      if (sk.isNotEmpty) {
++        expect(Bip340.publicKey(hex(sk)), pk, reason: 'pubkey ${f[0]}');
++        expect(Bip340.sign(hex(sk), msg, hex(aux)), sig, reason: 'sign ${f[0]}');
++        signed++;
++      }
++      expect(Bip340.verify(pk, msg, sig), expected, reason: 'verify ${f[0]}: ${f.length > 7 ? f[7] : ''}');
++      if (expected) verified++; else rejected++;
++    }
++    // Rows 0-18 of the 2023 revision: eight with a secret key, nine valid.
++    expect(signed, 8);
++    expect(verified, 9);
++    expect(rejected, 10);
++  });
++
++  test('scalar helpers', () {
++    expect(Secp256k1.parseScalar(Uint8List(32)), isNull);
++    expect(Secp256k1.parseScalar(Secp256k1.scalarToBytes(Secp256k1.n)), isNull);
++    expect(Secp256k1.parseScalar(Secp256k1.scalarToBytes(Secp256k1.n - BigInt.one)), isNotNull);
++    final t = Secp256k1.parseScalar(hex('0000000000000000000000000000000000000000000000000000000000000003'))!;
++    final T = Secp256k1.scalarToPoint(t);
++    expect(T.length, 33);
++    expect(T.sublist(1), hex('F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9'));
++    final d = BigInt.from(12345);
++    expect(Secp256k1.tweakPoint(T, d), Secp256k1.scalarToPoint(Secp256k1.tweakScalar(t, d)));
++  });
++
++  test('adaptor signatures in all four parity cases', () {
++    var evenP = 0, oddP = 0, evenR = 0, oddR = 0;
++    for (var i = 1; i <= 24; i++) {
++      final sk = Secp256k1.scalarToBytes(BigInt.from(1000 + i * 7919));
++      final pk = Bip340.publicKey(sk);
++      final pPoint = (Secp256k1.g * Secp256k1.bytesToBigInt(sk))!;
++      if (Secp256k1.hasEvenY(pPoint)) evenP++; else oddP++;
++      final t = BigInt.from(50000 + i * 104729) % Secp256k1.n;
++      final T = Secp256k1.scalarToPoint(t);
++      final msg = Bip340.sha256([i]);
++      final aux = Bip340.sha256([i, i]);
++      final presig = Bip340.adaptorSign(sk, msg, T, aux);
++      final rPoint = Secp256k1.parseCompressed(presig.sublist(0, 33))!;
++      if (Secp256k1.hasEvenY(rPoint)) evenR++; else oddR++;
++      expect(Bip340.adaptorVerify(pk, msg, T, presig), isTrue);
++      expect(Bip340.adaptorVerify(pk, msg, Secp256k1.scalarToPoint(t + BigInt.one), presig), isFalse);
++      // A pre-signature is not a signature.
++      expect(Bip340.verify(pk, msg, [...presig.sublist(1, 33), ...presig.sublist(33)]), isFalse);
++      final sig = Bip340.adaptorComplete(presig, t);
++      expect(Bip340.verify(pk, msg, sig), isTrue, reason: 'case $i');
++      expect(Bip340.adaptorExtract(presig, sig), t, reason: 'extract $i');
++    }
++    expect(evenP, greaterThan(0));
++    expect(oddP, greaterThan(0));
++    expect(evenR, greaterThan(0));
++    expect(oddR, greaterThan(0));
++  });
++}
+-- 
+2.53.0.windows.2
+

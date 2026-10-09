@@ -1,0 +1,164 @@
+# The whole PTLC lab: the devnet with the contract active, regtest bitcoind,
+# and the lab console with znn-cli and the scenarios inside it.
+#
+#   docker compose up -d --build        # then open http://localhost:8470
+#   docker compose down                 # stop; the chain is kept
+#   docker compose down -v              # wipe; the next up starts from genesis
+#
+# go-zenon is built from the branch this directory sits in: the tree one level
+# up is handed to the build as the `gozenon` context. The Dart SDK and the
+# Dart CLI are fetched at pinned commits and patched from dart/
+# (docker/Dockerfile). To build the node from release/0.0.9 and patches/
+# instead, add -f docker/compose.release.yml.
+#
+# Ports, all on loopback: 8470 the console, 35997/35998 the node's HTTP and WS
+# RPC (35998 is what a wallet extension on this machine dials), 35991 pillar 1,
+# 18443 bitcoind.
+#
+# The other things this repository runs sit behind two profiles, so that a
+# plain `up` starts only what stays up:
+#
+#   docker compose run --rm cli ptlc.keygen
+#   docker compose run --rm cli -i 3 balance z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e
+#   docker compose run --rm nom-to-nom
+#   docker compose run --rm nom-to-btc -scenario refund
+#   docker compose run --rm keyswap            # the swap on key locks, no secret on the chain
+#   docker compose run --rm test-go            # the contract's unit and mock-chain tests
+#   docker compose run --rm test-live          # the branch's live suite, against this devnet
+#   docker compose run --rm test-dart          # the SDK's tests, BIP-340 vectors included
+#   docker compose run --rm test-scenario      # the bitcoin leg in btcd's script engine
+name: ptlc
+
+include:
+  - devnet/compose.yml
+  - scenarios/nom-to-btc/compose.yml
+
+# The enclosing go-zenon tree. A build context of this name replaces the
+# Dockerfile stage of the same name, so nothing is fetched or patched for
+# go-zenon and the contract that runs is the one checked out.
+x-tree: &tree
+  gozenon: ..
+
+x-lab: &lab
+  image: zenon-ptlc/lab:dev
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: lab
+    additional_contexts: *tree
+  networks: [devnet, default]
+
+x-lab-env: &lab-env
+  LAB_ZNND_HTTP: http://rpc:35997
+  LAB_ZNND_WS: ws://rpc:35998
+  LAB_BTC_RPC: bitcoind:18443
+  LAB_CHAIN_ID: "69"
+
+services:
+  lab:
+    <<: *lab
+    container_name: ptlc-lab
+    restart: unless-stopped
+    depends_on:
+      rpc: { condition: service_started }
+      bitcoind: { condition: service_healthy }
+    environment:
+      <<: *lab-env
+      # What a browser wallet on the host dials. The extension runs outside
+      # Docker, so this is the published port, not the service name.
+      LAB_ZNND_WS_PUBLIC: ws://127.0.0.1:35998
+      # A name the lab is published under, if it is: a request that arrives
+      # by it is told the node's addresses under the same name instead of the
+      # loopback ones. Unset, labd answers to localhost only.
+      LAB_PUBLIC_URL: ${PTLC_PUBLIC_URL:-}
+    ports:
+      - "127.0.0.1:${PTLC_LAB_PORT:-8470}:8470"
+    # labd runs a program for whoever can reach the page. It counts what it
+    # starts; these are the bounds if the count is ever wrong, so a mistake
+    # costs this container and not the rest of the machine.
+    mem_limit: 1g
+    pids_limit: 256
+    cpus: 2
+
+  # ---- tools: one-shot programs against the running devnet -------------------
+  cli:
+    <<: *lab
+    profiles: [tools]
+    depends_on: [rpc]
+    # The node, chain and keystore are given; add -i N to sign as another
+    # index of the devnet mnemonic (1 is Alice, 3 is Bob).
+    entrypoint: ["lab-entrypoint", "znn-cli", "-u", "ws://rpc:35998", "-c", "69", "-k", "ptlc-devnet", "-p", "ptlc"]
+
+  nom-to-nom:
+    <<: *lab
+    profiles: [tools]
+    depends_on: [rpc]
+    environment:
+      CLI: znn-cli
+      URL: ws://rpc:35998
+    entrypoint: ["lab-entrypoint", "bash", "/opt/scenarios/nom-to-nom.sh"]
+
+  nom-to-btc:
+    <<: *lab
+    profiles: [tools]
+    depends_on:
+      rpc: { condition: service_started }
+      bitcoind: { condition: service_healthy }
+    entrypoint: ["nom-to-btc", "-nom", "http://rpc:35997", "-btc", "bitcoind:18443"]
+    command: ["-scenario", "happy"]
+
+  # The swap on key locks, both parties in one process. Give -dir a path on a
+  # volume to stop it part way (-stop bob:locked) and carry it on in a second
+  # run; without one the state goes with the container.
+  keyswap:
+    <<: *lab
+    profiles: [tools]
+    depends_on: [rpc]
+    entrypoint: ["keyswap", "-nom", "http://rpc:35997"]
+
+  # ---- test: the suites, on Linux, from the patched trees --------------------
+  test-go:
+    profiles: [test]
+    image: zenon-ptlc/suite:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: suite
+      additional_contexts: *tree
+    # The image's default command is the ptlc packages. For go-zenon's whole
+    # suite the way upstream CI runs it:
+    #   docker compose run --rm test-go sh -c 'for s in $(go list ./...); do go test -failfast -p 1 $s || exit 1; done'
+
+  test-live:
+    profiles: [test]
+    image: zenon-ptlc/suite:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: suite
+      additional_contexts: *tree
+    depends_on: [rpc]
+    networks: [devnet]
+    environment:
+      PTLC_TESTNET_RPC: http://rpc:35997
+    # Go's default ten minutes is too short for the two tests that wait out
+    # an expiry.
+    command: ["go", "test", "-tags", "testnet", "-count=1", "-timeout", "25m", "-v", "./testnet/ptlc/"]
+
+  test-dart:
+    profiles: [test]
+    image: zenon-ptlc/dart:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: dart
+
+  test-scenario:
+    profiles: [test]
+    image: zenon-ptlc/scenario:dev
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: scenario-build
+      additional_contexts: *tree
+    command: ["go", "test", "-count=1", "./..."]

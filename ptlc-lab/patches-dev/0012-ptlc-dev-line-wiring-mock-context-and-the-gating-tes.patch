@@ -1,0 +1,70 @@
+From 60279d5856f107c27301048229613917fec7dab2 Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Wed, 7 Oct 2026 23:57:44 -0400
+Subject: [PATCH 12/12] ptlc: dev-line wiring, mock context and the gating test
+
+The contract is its own spork bit of the composed table (applyPtlcDiffs,
+ptlcSporkBit), consulted on top of whichever set is in force, and reads
+spork state from the cache store like every other bit here. The unit
+test's mock context gains CacheStore and the dynamic-plasma getter. The
+gating test no longer expects the ptlc spork to carry the htlc contract
+along: on this line each spork activates alone.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ vm/embedded/implementation/ptlc_test.go | 8 ++++++++
+ vm/embedded/tests/ptlc_test.go          | 5 ++++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/vm/embedded/implementation/ptlc_test.go b/vm/embedded/implementation/ptlc_test.go
+index 83ac3a2..d690204 100644
+--- a/vm/embedded/implementation/ptlc_test.go
++++ b/vm/embedded/implementation/ptlc_test.go
+@@ -503,6 +503,10 @@ func newTestPtlcContext(chainIdentifier uint64, timestamp int64) *testPtlcContex
+ 	}
+ }
+ 
++func (ctx *testPtlcContext) CacheStore() store.Cache {
++	return nil
++}
++
+ func (ctx *testPtlcContext) MomentumStore() store.Momentum {
+ 	return nil
+ }
+@@ -534,6 +538,10 @@ func (ctx *testPtlcContext) IsHtlcSporkEnforced() bool {
+ 	return true
+ }
+ 
++func (ctx *testPtlcContext) IsDynamicPlasmaSporkEnforced() bool {
++	return false
++}
++
+ func (ctx *testPtlcContext) IsPtlcSporkEnforced() bool {
+ 	return true
+ }
+diff --git a/vm/embedded/tests/ptlc_test.go b/vm/embedded/tests/ptlc_test.go
+index 8c5e1ae..4342ef9 100644
+--- a/vm/embedded/tests/ptlc_test.go
++++ b/vm/embedded/tests/ptlc_test.go
+@@ -160,6 +160,9 @@ func TestPtlc_spork_gating(t *testing.T) {
+ 	}, nil, mock.SkipVmChanges)
+ 	z.InsertNewMomentum()
+ 
++	// On this line every spork is its own bit of the contract table, so the
++	// ptlc spork does not carry the htlc contract with it as the release
++	// line's chain of sets does: htlc needs its own activation.
+ 	lock := crypto.Hash(preimageZ)
+ 	z.InsertSendBlock(&nom.AccountBlock{
+ 		Address:   g.User1.Address,
+@@ -173,7 +176,7 @@ func TestPtlc_spork_gating(t *testing.T) {
+ 		),
+ 		TokenStandard: types.ZnnTokenStandard,
+ 		Amount:        big.NewInt(10 * g.Zexp),
+-	}, nil, mock.SkipVmChanges)
++	}, constants.ErrContractDoesntExist, mock.NoVmChanges)
+ 	z.InsertNewMomentum()
+ }
+ 
+-- 
+2.53.0.windows.2
+

@@ -1,0 +1,33 @@
+01:43:47   ok   the page shows a card for each of the lab's 14 scenarios: 14 cards
+01:43:47   ok   the page shows the chain is live: Chain live, block 5,413
+01:43:47 Unlock with a secret (secret, 5 steps)
+01:44:45     [done] Alice makes a secret and the lock that fits it: A random number, and a lock only that number opens
+01:44:45     [done, accepted] Alice locks 1 ZNN for Bob: The contract accepted
+01:44:45     [done] Alice gives Bob the secret: Off the chain; nobody else sees it yet
+01:44:45     [done, accepted] Bob unlocks with the secret: The contract accepted
+01:44:45     [done] Bob receives 1 ZNN: 1 ZNN paid to Bob
+01:44:45   ok   secret: the page says it passed: Passed | Bob opened the lock with the secret and was paid 1 ZNN | 54 s; 58 s here
+01:44:45   ok   secret: all 5 steps are drawn settled: done done done done done
+01:44:45   ok   secret: each call is drawn with the outcome it was meant to meet: accepted accepted
+01:44:45 Broken locks are turned away (bad-locks, 3 steps)
+01:45:14     [done, rejected] Alice tries a lock to a key that cannot exist: The network would not take it: invalid point lock. Nothing left the account.
+01:45:14     [done, refused] Alice tries a lock whose deadline has passed: The contract refused, as it should
+01:45:14     [done] The 1 ZNN comes straight back: 1 ZNN paid to Alice
+01:45:14   ok   bad-locks: the page says it passed: Passed | The impossible lock never left Alice's account, and the expired one was refunded | 24 s; 28 s here
+01:45:14   ok   bad-locks: all 3 steps are drawn settled: done done done
+01:45:14   ok   bad-locks: each call is drawn with the outcome it was meant to meet: rejected refused
+01:45:14 Swap bitcoin for ZNN (swap-btc, 7 steps)
+01:46:05     [done] Alice locks 100,000 sats on Bitcoin: In a Taproot output only the two of them can spend
+01:46:05     [done] Alice gives Bob a half-finished signature for the bitcoin: Bob checked it: the secret is the one missing piece
+01:46:05     [done, accepted] Bob locks 10 ZNN for Alice: The contract accepted
+01:46:05     [done, accepted] Alice takes the ZNN, which reveals her secret: The contract accepted
+01:46:05     [done] Alice receives 10 ZNN: 10 ZNN paid to Alice
+01:46:05     [done] Bob reads the secret from the chain: It is in Alice's unlock, public to everyone now
+01:46:05     [done] Bob finishes the signature and takes the bitcoin: An ordinary-looking Bitcoin payment; nothing links it to the ZNN
+01:46:05   ok   swap-btc: the page says it passed: Passed | Alice got 10 ZNN and Bob got the bitcoin, with nobody in between | 47 s; 51 s here
+01:46:05   ok   swap-btc: all 7 steps are drawn settled: done done done done done done done
+01:46:05   ok   swap-btc: each call is drawn with the outcome it was meant to meet: accepted accepted
+01:46:05 tally on the page (passed / failed / not run): 3 / 0 / 11
+01:46:06   ok   after a reload the last result is still shown, read back from the lab: Passed in 47 s
+
+All checks passed

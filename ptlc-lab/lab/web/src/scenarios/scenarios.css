@@ -1,0 +1,1453 @@
+/*
+  The scenarios page. The same design system as the console (../style.css
+  gives the tokens, the bar, the buttons and the chips), with far less on it:
+  a card per thing the contract can do, and inside an open card the flow as
+  lanes.
+
+  The colours mean here what they mean on the console, and nothing else is
+  coloured. Blue is a step on its way, green is what the contract accepted or
+  paid, crimson is what it refused, amber is a deadline, grey is a block the
+  node would not take. The people in a flow are told apart by their letter,
+  not by a colour, so that a colour on a lane is always a state.
+
+  Movement here carries state. A line marches while a call is on its way, a
+  dot crosses from whoever acts to whoever is acted on, a mark draws itself
+  when a step is settled. There is no prefers-reduced-motion rule and there
+  must not be one (CLAUDE.md, Motion): with the movement cut, a step on its
+  way and a step that never started look the same.
+*/
+
+body {
+  overflow-x: hidden;
+}
+
+/* ---- top bar ----------------------------------------------------------- */
+
+.top {
+  gap: 20px;
+}
+.top .wordmark {
+  width: auto;
+  margin-right: auto;
+}
+
+/* The chain, as one chip: a lamp that beats when a block lands, and its
+   height. */
+.chain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--surface);
+  font-size: 0.82rem;
+  color: var(--soft);
+  white-space: nowrap;
+}
+.chain b {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--fg);
+}
+.chain .beat {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: beat 1.1s ease-out;
+}
+.chain.down {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+.chain.down .beat {
+  background: var(--danger);
+  animation: none;
+}
+@keyframes beat {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--znn) 75%, transparent);
+    transform: scale(1.4);
+  }
+  100% {
+    box-shadow: 0 0 0 12px transparent;
+    transform: scale(1);
+  }
+}
+
+/* The results so far: three readouts, each a figure over a ledger caption. */
+.tally {
+  display: flex;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--edge);
+}
+.tally div {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  min-width: 68px;
+  padding: 3px 12px 4px;
+}
+.tally div + div {
+  border-left: 1px solid var(--line);
+}
+.tally dt {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.tally dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--soft);
+}
+.tally dd span {
+  display: inline-block;
+}
+.tally .pass dd {
+  color: var(--paid);
+}
+.tally .fail dd {
+  color: var(--refused);
+}
+.tally .fail.zero dd {
+  color: var(--dim);
+}
+
+.other {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.86rem;
+  color: var(--soft);
+  white-space: nowrap;
+}
+.other:hover {
+  color: var(--fg);
+  text-decoration: none;
+}
+.other svg {
+  color: var(--znn-ink);
+  transition: transform 200ms var(--ease);
+}
+.other:hover svg {
+  transform: translateX(3px);
+}
+
+/* ---- page -------------------------------------------------------------- */
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 34px 24px 80px;
+}
+
+.intro h1 {
+  font-size: 2.15rem;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+}
+.intro p {
+  margin-top: 12px;
+  max-width: 74ch;
+  font-size: 1.04rem;
+  color: var(--soft);
+}
+.intro p b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.intro .legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin-top: 16px;
+  font-size: 0.84rem;
+  color: var(--dim);
+  max-width: none;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.key {
+  display: inline-block;
+  flex: none;
+}
+.key.ok {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--znn);
+}
+/* The two keys are the two arrows of a flow in small: a green line that
+   arrives at an arrowhead, and a red one that stops at a bar. Each end is its
+   own box. The bar was once an offset shadow of the line, which drew as a
+   second, blurred line beside the first. */
+.key.line-ok,
+.key.line-no {
+  position: relative;
+  width: 24px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--paid);
+}
+.key.line-ok {
+  margin-right: 5px;
+}
+.key.line-ok::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  margin-left: -2px;
+  border: 5px solid transparent;
+  border-left: 7px solid var(--paid);
+  border-right: 0;
+}
+.key.line-no {
+  width: 17px;
+  margin-right: 3px;
+  background: var(--refused);
+}
+.key.line-no::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: -6px;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--refused);
+}
+
+.alert {
+  margin-top: 18px;
+  padding: 10px 14px;
+  border-left: 2px solid var(--danger);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--refused-bg);
+  color: var(--fg);
+}
+.alert.small {
+  margin: 0 18px 14px;
+  font-size: 0.86rem;
+}
+.loading {
+  margin-top: 28px;
+  color: var(--dim);
+}
+
+.group {
+  margin-top: 44px;
+}
+.group > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 16px;
+  align-items: baseline;
+}
+.group > header h2 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.group > header p {
+  grid-column: 1 / -1;
+  max-width: 78ch;
+  color: var(--soft);
+}
+/* How much of this group has passed, in the texture of a table head. */
+.group > header .score {
+  white-space: nowrap;
+  transition: color 0.4s var(--ease);
+}
+.group > header .score.all {
+  color: var(--paid);
+}
+.group > header .score.bad {
+  color: var(--refused);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+/* ---- a card ------------------------------------------------------------ */
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--edge);
+  transition:
+    border-color 0.3s var(--ease),
+    box-shadow 0.3s var(--ease);
+}
+.card:hover {
+  border-color: var(--line-strong);
+}
+/* The edge of a card is its result, readable from across the page. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: -1px auto -1px -1px;
+  width: 3px;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: var(--line-strong);
+  transition: background 0.5s;
+}
+.card.pass::before {
+  background: var(--znn);
+}
+.card.fail::before {
+  background: var(--danger);
+}
+.card.running::before {
+  background: linear-gradient(to bottom, var(--locked) 0 50%, transparent 50% 100%);
+  background-size: 100% 16px;
+  animation: slide 0.7s linear infinite;
+}
+@keyframes slide {
+  to {
+    background-position: 0 16px;
+  }
+}
+.card.open {
+  grid-column: 1 / -1;
+  border-color: var(--line-strong);
+  box-shadow: var(--edge), var(--shadow-pop);
+}
+
+.card-top {
+  padding: 15px 18px 0 20px;
+}
+.card .title {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  cursor: pointer;
+}
+.card .title:focus-visible {
+  outline: 2px solid var(--znn-ink);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.card h3 {
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+.chev {
+  flex: none;
+  margin-top: 3px;
+  color: var(--dim);
+  transition:
+    transform 0.35s var(--spring),
+    color 150ms var(--ease);
+}
+.card .title:hover .chev {
+  color: var(--fg);
+}
+.card.open .chev {
+  transform: rotate(180deg);
+}
+.shows {
+  margin-top: 5px;
+  color: var(--soft);
+  font-size: 0.94rem;
+  max-width: 86ch;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: auto;
+  padding: 14px 18px 15px 20px;
+}
+.card-foot .btn {
+  min-width: 96px;
+}
+/* Plasma is spent on one action at a time: the Run of the card that is open.
+   On a closed card the same button is drawn in outline, green so that it is
+   still plainly the thing to press, and fills when the pointer reaches it.
+   Fourteen filled buttons on one page would be a wall, not a signal. */
+.card:not(.open) .btn-run {
+  --btn-bg: transparent;
+  --btn-fg: var(--znn-ink);
+  --btn-border: color-mix(in srgb, var(--znn) 45%, transparent);
+  --btn-bg-hover: var(--plasma);
+  --btn-fg-hover: var(--on-plasma);
+  --btn-border-hover: transparent;
+  --btn-filter-hover: none;
+}
+.card:not(.open) .btn-run::after {
+  opacity: 0;
+  transition: opacity 150ms var(--ease);
+}
+.card:not(.open) .btn-run:hover:not(:disabled)::after {
+  opacity: 1;
+}
+.btn-run svg {
+  fill: currentColor;
+  stroke-width: 0;
+}
+.btn-stop svg {
+  fill: currentColor;
+  color: var(--danger);
+}
+.eta {
+  font-size: 0.82rem;
+  color: var(--dim);
+}
+/* The result, as a chip: a dot and the word. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 0 10px 0 8px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 22px;
+  letter-spacing: 0.03em;
+  background: var(--raised);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.badge.pass {
+  background: var(--paid-bg);
+  border-color: transparent;
+  color: var(--paid);
+}
+.badge.pass i {
+  background: var(--paid);
+}
+.badge.fail {
+  background: var(--refused-bg);
+  border-color: transparent;
+  color: var(--refused);
+}
+.badge.fail i {
+  background: var(--refused);
+}
+.badge.running {
+  background: var(--locked-bg);
+  border-color: transparent;
+  color: var(--locked);
+}
+.badge.running i {
+  background: var(--locked);
+  animation: blink 0.9s ease-in-out infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+
+/* The flow unfolds. A grid row animated from 0fr to 1fr is the one way to
+   animate a height nobody knows in advance. */
+.unfold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.5s var(--spring);
+}
+.card.open .unfold {
+  grid-template-rows: 1fr;
+}
+.unfold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- the flow ---------------------------------------------------------- */
+
+/* Cut into the card: the flow is a readout, and readouts sit in wells. */
+.stage {
+  --cols: 30px minmax(0, 1fr) minmax(0, 1.2fr);
+  margin: 0 18px 18px 20px;
+  padding: 14px 16px 16px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  animation: stage-in 0.55s var(--spring) both;
+}
+@keyframes stage-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+.lanes {
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.lane-heads {
+  display: grid;
+  grid-template-columns: repeat(var(--lanes), minmax(0, 1fr));
+}
+.lane-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.token {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--edge);
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition:
+    box-shadow 0.3s,
+    border-color 0.3s,
+    transform 0.3s;
+}
+/* The contract is not a person: square, and marked with a lock in the
+   chain's own green. */
+.lane-head.contract .token {
+  border-radius: var(--radius);
+  color: var(--znn-ink);
+  border-color: color-mix(in srgb, var(--znn) 40%, var(--line-strong));
+}
+.lane-head.bitcoin .token {
+  color: var(--btc);
+  border-color: color-mix(in srgb, var(--btc) 45%, var(--line-strong));
+  font-size: 1.05rem;
+}
+.lane-head.acting .token {
+  border-color: var(--locked);
+  animation: glow 1.3s ease-in-out infinite;
+}
+@keyframes glow {
+  50% {
+    box-shadow:
+      var(--edge),
+      0 0 0 5px color-mix(in srgb, var(--locked) 24%, transparent);
+    transform: scale(1.07);
+  }
+}
+.who {
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--soft);
+  line-height: 1.15;
+}
+.purse {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+}
+.coin {
+  padding: 0 8px;
+  border-radius: 99px;
+  background: var(--paid-bg);
+  color: var(--paid);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.coin-enter-active {
+  animation: coin-in 0.7s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+@keyframes coin-in {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.5);
+  }
+  60% {
+    transform: translateY(-2px) scale(1.15);
+  }
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.step {
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: 12px;
+  align-items: center;
+  min-height: 50px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  transition:
+    opacity 0.45s,
+    background 0.6s;
+  animation: step-in 0.5s var(--spring) both;
+  animation-delay: calc(var(--i) * 45ms);
+}
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+}
+.step.pending {
+  opacity: 0.45;
+}
+.step.flying {
+  background: linear-gradient(to right, var(--locked-bg), transparent 70%);
+}
+.step.failed {
+  background: linear-gradient(to right, var(--refused-bg), transparent 80%);
+  animation: shake 0.45s;
+}
+@keyframes shake {
+  25% {
+    transform: translateX(-4px);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+}
+
+/* The mark: has this step gone as it should. */
+.mark {
+  display: grid;
+  place-items: center;
+}
+.mark svg {
+  overflow: visible;
+}
+.mark .ring {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+  transition:
+    fill 0.35s,
+    stroke 0.35s;
+}
+.mark .spin {
+  fill: none;
+  stroke: var(--locked);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 16 41;
+  transform-origin: 12px 12px;
+  opacity: 0;
+}
+.step.flying .mark .spin {
+  opacity: 1;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.mark .tick,
+.mark .cross {
+  fill: none;
+  stroke: var(--on-plasma);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 22;
+  stroke-dashoffset: 22;
+}
+.mark .cross {
+  stroke: var(--bg);
+}
+.step.done .mark .ring {
+  fill: var(--znn);
+  stroke: var(--znn);
+}
+.step.done .mark svg {
+  animation: settle 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.step.done .mark .tick {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.4s 0.12s ease-out;
+}
+.step.failed .mark .ring {
+  fill: var(--danger);
+  stroke: var(--danger);
+}
+.step.failed .mark .cross {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.3s ease-out;
+}
+@keyframes settle {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.2);
+  }
+}
+
+.what {
+  min-width: 0;
+}
+.label {
+  font-weight: 500;
+  line-height: 1.3;
+}
+.label .tag {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+/* Not taken: the node would not publish the block. No state reached the
+   chain, so the chip has no colour. */
+.tag.rejected {
+  background: var(--raised);
+  border-color: var(--line-strong);
+  color: var(--soft);
+}
+.detail {
+  font-size: 0.84rem;
+  color: var(--soft);
+  line-height: 1.4;
+}
+.step.failed .detail {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+/* A call's three moments. They light left to right. */
+.pips {
+  display: flex;
+  gap: 12px;
+  margin: 3px 0 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.pips span {
+  position: relative;
+  padding-left: 11px;
+  opacity: 0.5;
+  transition:
+    opacity 0.4s,
+    color 0.4s;
+}
+.pips span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: currentColor;
+  transition: transform 0.4s cubic-bezier(0.2, 1.8, 0.4, 1);
+}
+.pips[data-lit='1'] span:nth-child(-n + 1),
+.pips[data-lit='2'] span:nth-child(-n + 2),
+.pips[data-lit='3'] span:nth-child(-n + 3) {
+  opacity: 1;
+  color: var(--locked);
+}
+.pips[data-lit='1'] span:nth-child(1)::before,
+.pips[data-lit='2'] span:nth-child(2)::before,
+.pips[data-lit='3'] span:nth-child(3)::before {
+  transform: scale(1.6);
+}
+.step.pending .pips,
+.step.done .pips {
+  display: none;
+}
+
+/* ---- the track: lanes, and what crosses them --------------------------- */
+
+.track {
+  position: relative;
+  align-self: stretch;
+  min-height: 40px;
+}
+.guide {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 0;
+  border-left: 1px dashed var(--line-strong);
+}
+
+.node {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--sunk);
+  border: 2px solid var(--line-strong);
+  transition:
+    background 0.35s,
+    border-color 0.35s;
+}
+.step.flying .node {
+  border-color: var(--locked);
+  animation: ripple 1.1s ease-out infinite;
+}
+.step.done .node {
+  background: var(--soft);
+  border-color: var(--soft);
+  animation: ripple-once 0.7s ease-out;
+}
+@keyframes ripple {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--locked) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 13px transparent;
+  }
+}
+@keyframes ripple-once {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--soft) 50%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+/* `--stroke` is the colour of this one arrow, set by the state rules below
+   and read by its shaft, its tip and its bar. */
+.arrow {
+  --stroke: var(--line-strong);
+  position: absolute;
+  top: 50%;
+  height: 0;
+}
+/* Drawn left to right and mirrored, so every rule below has one direction. */
+.arrow.backwards {
+  transform: scaleX(-1);
+}
+.shaft {
+  position: absolute;
+  left: 7px;
+  right: 9px;
+  top: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(to right, var(--stroke) 0 7px, transparent 7px 13px);
+  transition: right 0.5s var(--spring);
+}
+.tip {
+  position: absolute;
+  right: 6px;
+  top: -5px;
+  border: 5px solid transparent;
+  border-left: 8px solid var(--stroke);
+  border-right: 0;
+  transition:
+    border-left-color 0.35s,
+    opacity 0.3s;
+}
+.stop {
+  position: absolute;
+  top: -8px;
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--stroke);
+  opacity: 0;
+  transform: scaleY(0);
+}
+.packet {
+  position: absolute;
+  left: 0;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--locked);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--locked) 22%, transparent),
+    0 0 14px color-mix(in srgb, var(--locked) 70%, transparent);
+  opacity: 0;
+}
+.arrive {
+  position: absolute;
+  right: 0;
+  top: -7px;
+  width: 14px;
+  height: 14px;
+  margin-right: -7px;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+/* On its way: the line marches towards whoever it is for, and a dot crosses. */
+.step.flying .arrow {
+  --stroke: var(--locked);
+}
+.step.flying .shaft {
+  background-size: 13px 2px;
+  animation: march 0.5s linear infinite;
+}
+@keyframes march {
+  to {
+    background-position: 13px 0;
+  }
+}
+.step.flying .packet {
+  opacity: 1;
+  animation: cross 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes cross {
+  0% {
+    left: 0;
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  88% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+/* Settled. The colour is what the chain did. */
+.step.done .arrow {
+  --stroke: var(--soft);
+}
+.step.done .shaft {
+  background: var(--stroke);
+}
+.step.done.accepted .arrow,
+.step.done.pay .arrow {
+  --stroke: var(--paid);
+}
+.step.done.bitcoin .arrow {
+  --stroke: var(--btc);
+}
+.step.done .arrive {
+  animation: arrive 0.8s ease-out;
+}
+@keyframes arrive {
+  from {
+    opacity: 0.9;
+    box-shadow: 0 0 0 0 var(--stroke);
+  }
+  to {
+    opacity: 0;
+    box-shadow: 0 0 0 16px transparent;
+  }
+}
+/* What the contract paid out lands as a coin, once. */
+.step.done.pay .packet {
+  background: var(--znn);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--znn) 25%, transparent),
+    0 0 14px color-mix(in srgb, var(--znn) 70%, transparent);
+  animation: coin-land 0.9s cubic-bezier(0.3, 0, 0.2, 1) both;
+}
+@keyframes coin-land {
+  0% {
+    left: 0;
+    opacity: 1;
+    transform: scale(1.3);
+  }
+  80% {
+    left: 100%;
+    opacity: 1;
+    transform: scale(1.3);
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+/* Refused: the line stops short of the contract, at a bar. Nothing went in. */
+.step.done.refused .arrow {
+  --stroke: var(--refused);
+}
+.step.done.refused .shaft {
+  right: 36%;
+}
+.step.done.refused .tip,
+.step.done.rejected .tip {
+  opacity: 0;
+}
+.step.done.refused .stop {
+  right: calc(36% - 4px);
+  opacity: 1;
+  transform: scaleY(1);
+  transition: transform 0.35s 0.3s cubic-bezier(0.2, 1.8, 0.4, 1);
+}
+.step.done.refused .packet {
+  background: var(--refused);
+  box-shadow: none;
+  animation: bounce 0.9s ease-out both;
+}
+@keyframes bounce {
+  0% {
+    left: 0;
+    opacity: 1;
+  }
+  45% {
+    left: 62%;
+    opacity: 1;
+  }
+  100% {
+    left: 30%;
+    opacity: 0;
+  }
+}
+.step.done.refused .arrive,
+.step.done.rejected .arrive {
+  animation: none;
+}
+/* Not taken: the block never left. The line barely starts. */
+.step.done.rejected .arrow {
+  --stroke: var(--dim);
+}
+.step.done.rejected .shaft {
+  right: 74%;
+  background: repeating-linear-gradient(to right, var(--stroke) 0 5px, transparent 5px 9px);
+}
+.step.done.rejected .stop {
+  right: calc(74% - 4px);
+  opacity: 1;
+  transform: scaleY(1);
+  transition: transform 0.35s 0.2s cubic-bezier(0.2, 1.8, 0.4, 1);
+}
+.step.failed .arrow {
+  --stroke: var(--refused);
+}
+
+/* A deadline. Amber is the colour of time running out, here and on the
+   console's clock. */
+.timer {
+  position: absolute;
+  inset: 50% 4% auto 4%;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 99px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.timer .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--warn) 30%, transparent) 0 8px,
+    color-mix(in srgb, var(--warn) 14%, transparent) 8px 16px
+  );
+  background-size: 22.6px 100%;
+  transition: width 0.3s linear;
+}
+.step.flying .timer .fill {
+  animation: stripes 0.8s linear infinite;
+}
+@keyframes stripes {
+  to {
+    background-position: 22.6px 0;
+  }
+}
+.step.done .timer .fill {
+  background: var(--returned-bg);
+}
+.timer .count {
+  position: relative;
+  display: block;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+  line-height: 20px;
+  color: var(--fg);
+}
+
+/* ---- verdict and details ----------------------------------------------- */
+
+.verdict {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--znn) 30%, transparent);
+  background: var(--paid-bg);
+  color: var(--fg);
+}
+.verdict.fail {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--refused-bg);
+}
+.verdict strong {
+  font-size: 1.06rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--paid);
+}
+.verdict.fail strong {
+  color: var(--refused);
+}
+.verdict small {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.76rem;
+  color: var(--soft);
+}
+.rise-enter-active {
+  animation: rise 0.6s cubic-bezier(0.2, 1.2, 0.3, 1) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}
+
+.log {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  color: var(--soft);
+}
+.log summary {
+  cursor: pointer;
+  width: fit-content;
+  list-style-position: inside;
+}
+.hashes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.hashes li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hashes code {
+  color: var(--soft);
+}
+.log pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---- small transitions ------------------------------------------------- */
+
+.pop-enter-active {
+  animation: pop 0.45s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+.swap-enter-active,
+.swap-leave-active {
+  transition:
+    opacity 0.22s,
+    transform 0.22s;
+}
+.swap-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+}
+.swap-leave-to {
+  opacity: 0;
+  transform: translateY(-5px);
+}
+.roll-enter-active,
+.roll-leave-active {
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+.roll-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.roll-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* ---- zBTC -------------------------------------------------------------- */
+
+.zbtc {
+  margin-top: 14px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--btc);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+}
+.zbtc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.zbtc h3 {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+/* The system's one reserved accent: what is new or featured. A prototype
+   shown beside the working thing is exactly that. */
+.tag.featured {
+  background: var(--new-bg);
+  border-color: transparent;
+  color: var(--new-ink);
+}
+.zbtc p {
+  margin-top: 8px;
+  max-width: 86ch;
+  color: var(--soft);
+}
+.zbtc-flow {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 26px;
+  margin: 14px 0 4px;
+  padding: 0;
+}
+.zbtc-flow li {
+  position: relative;
+  padding: 10px 12px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.zbtc-flow li + li::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 50%;
+  width: 18px;
+  height: 2px;
+  margin-top: -1px;
+  background: repeating-linear-gradient(to right, var(--btc) 0 6px, transparent 6px 10px);
+  background-size: 10px 2px;
+  animation: march-slow 0.9s linear infinite;
+}
+@keyframes march-slow {
+  to {
+    background-position: 10px 0;
+  }
+}
+.zbtc-flow b {
+  display: block;
+  font-weight: 600;
+}
+.zbtc-flow span {
+  font-size: 0.84rem;
+  color: var(--soft);
+}
+.zbtc-status {
+  margin: 12px 0 0;
+  display: grid;
+  gap: 6px;
+}
+.zbtc-status div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 12px;
+}
+.zbtc-status dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  padding-top: 4px;
+}
+.zbtc-status dd {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--soft);
+}
+
+.foot {
+  margin-top: 46px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 0.86rem;
+  color: var(--dim);
+  max-width: 90ch;
+}
+.foot p + p {
+  margin-top: 6px;
+}
+
+/* ---- narrow ------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .top {
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding: 10px 16px;
+    position: static;
+  }
+  .top .wordmark {
+    flex-basis: calc(100% - 44px);
+  }
+  .top .icon-btn {
+    order: 1;
+  }
+  .top .chain,
+  .top .tally,
+  .top .other {
+    order: 2;
+  }
+}
+@media (max-width: 720px) {
+  .page {
+    padding: 22px 16px 60px;
+  }
+  .intro h1 {
+    font-size: 1.65rem;
+  }
+  .group > header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stage {
+    --cols: 26px minmax(0, 1fr);
+    margin: 0 10px 12px 12px;
+    padding: 10px;
+  }
+  /* The lanes go under the words, at full width. */
+  .lanes > span:nth-child(2) {
+    display: none;
+  }
+  .lane-heads {
+    grid-column: 1 / -1;
+  }
+  .lanes > span:first-child {
+    display: none;
+  }
+  .step .track {
+    grid-column: 1 / -1;
+    min-height: 30px;
+  }
+  /* Under the words now, so the lane lines must not reach up into them. */
+  .guide {
+    top: 0;
+    bottom: 0;
+  }
+
+  .who {
+    font-size: 0.68rem;
+  }
+  .zbtc-flow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+  .zbtc-flow li + li::before {
+    left: 50%;
+    top: -19px;
+    width: 2px;
+    height: 16px;
+    margin: 0 0 0 -1px;
+    background: repeating-linear-gradient(to bottom, var(--btc) 0 6px, transparent 6px 10px);
+    animation: none;
+  }
+  .zbtc-status div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .badge {
+    margin-left: 0;
+  }
+}

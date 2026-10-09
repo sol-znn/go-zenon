@@ -1,0 +1,31 @@
+# ptlc.monitor against a junk unlock sent first, 2026-10-09 (UTC), on the devnet
+# C:/Users/user/AppData/Local/Temp/claude/C--dev-zenon/c4fe668e-07bc-4984-b16a-a5e7ff651990/scratchpad/monitor-test.sh: Alice (1) locks 1 ZNN to T for Bob (3); Bob runs ptlc.monitor twice,
+# the CLI before the fix (a14f8fc) and after it (914a2e1); Carol (2) sends an Unlock with the junk
+# scalar 00..09, which the contract refuses; Bob unlocks with t.
+
+15:16:43 t = 0c63c854226c6ecbe307d82d85d9d5415f56583b53ca42d488737b7ed7bf1d3d
+15:16:49 entry 1c786f4efd62c613843d903c745092bda58a5f5bb2bb44335cf0196347312c6e
+15:17:00 entry is on the chain; Bob starts the monitor
+15:17:15 Carol sends a junk unlock
+2026/10/09 11:17:40 junk unlock a7aad016f3797cd4f556e1ef957fd8e34c1bdfcd556f60b1e75a8ebacfaf44c3 answered: accepted=false err=<nil>
+15:17:40 Bob unlocks with t
+Done
+Use receiveAll to collect your ptlc amount after 2 momentums
+15:18:05 the pre-fix monitor (a14f8fc) said:
+Ptlc id 1c786f4efd62c613843d903c745092bda58a5f5bb2bb44335cf0196347312c6e with amount 100000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 022fa3e89a9129701f656577cc0afacde881178ad4e4aa57b245ab8b9c4066f333
+   Can be unlocked to z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e with the point's witness
+   Can be reclaimed in 00:59:35 by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+Monitoring ptlc id 1c786f4efd62c613843d903c745092bda58a5f5bb2bb44335cf0196347312c6e
+Ptlc was unlocked by z1qzmzssx28dc0fmvlca05hyxk2kgkgu7n0cj8pl; witness 0000000000000000000000000000000000000000000000000000000000000009
+Done
+15:18:05 the fixed monitor said:
+Ptlc id 1c786f4efd62c613843d903c745092bda58a5f5bb2bb44335cf0196347312c6e with amount 100000000 zts1znnxxxxxxxxxxxxx9z4ulx
+   Point type secp256k1 point, lock 022fa3e89a9129701f656577cc0afacde881178ad4e4aa57b245ab8b9c4066f333
+   Can be unlocked to z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e with the point's witness
+   Can be reclaimed in 00:59:40 by z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d
+Monitoring ptlc id 1c786f4efd62c613843d903c745092bda58a5f5bb2bb44335cf0196347312c6e
+A Unlock of this entry by z1qzmzssx28dc0fmvlca05hyxk2kgkgu7n0cj8pl was refused; still watching
+Ptlc was unlocked by z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e; witness 0c63c854226c6ecbe307d82d85d9d5415f56583b53ca42d488737b7ed7bf1d3d
+Done
+15:18:05 PASS: the monitor printed t, not the junk

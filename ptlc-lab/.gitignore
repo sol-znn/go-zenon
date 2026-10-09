@@ -1,0 +1,8 @@
+test-results/
+.build/
+*.log
+scenarios/nom-to-btc/nom-to-btc.exe
+lab/web/node_modules/
+lab/web/dist/
+lab/.syrius/
+.env

@@ -1,0 +1,50 @@
+keyswap on the devnet, stopped with both entries locked and carried on from disk.
+The program's own timestamps are the host's local time, four hours behind UTC; the date lines are UTC.
+
+Fri, Oct  9, 2026  6:32:00 PM
+2026/10/09 14:32:00 state in swap2
+2026/10/09 14:32:00 alice is at "offered"
+2026/10/09 14:32:02 bob   is at "accepted"
+2026/10/09 14:32:02 alice is at "accepted"
+2026/10/09 14:32:02 alice is at "locking"
+2026/10/09 14:32:02 alice locks 1000000000 of zts1qsrxxxxxxxxxxxxxmrhjll for z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e until 1791571310: entry 5db24c85b7df2a3feecb934cb0d68f10bcbceacc2256cffc87764aecb16e6fe2
+2026/10/09 14:32:02 alice is at "locked"
+2026/10/09 14:32:20 alice is at "presigned"
+2026/10/09 14:32:22 bob   is at "checking"
+2026/10/09 14:32:22 bob   is at "locking"
+2026/10/09 14:32:22 bob   locks 100000000 of zts1znnxxxxxxxxxxxxx9z4ulx for z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d until 1791571010: entry 93f85e090272b7e52bbcc7777f304f988c219d120639e11cddadd881179dccbe
+2026/10/09 14:32:22 bob   is at "locked"
+2026/10/09 14:32:22 bob   stops here, as asked; run again with -dir swap2 to carry on
+exit 3
+--- state on disk
+swap2/alice:
+swap.json
+
+swap2/bob:
+swap.json
+  "stage": "presigned",
+  "stage": "locked",
+--- resumed
+Fri, Oct  9, 2026  6:32:22 PM
+2026/10/09 14:32:23 state in swap2
+2026/10/09 14:32:23 alice carries on from "presigned"
+2026/10/09 14:32:23 bob   carries on from "locked"
+2026/10/09 14:32:51 bob   is at "presigned"
+2026/10/09 14:32:53 alice is at "checking"
+2026/10/09 14:32:53 alice is at "revealing"
+2026/10/09 14:32:53 alice claims Bob's entry with the completed signature: 3539ec93d3e8cb58a1a76f20fb2494faf8aa21adac6d77a1c2651de0d6b753a8
+2026/10/09 14:32:53 alice is at "claiming"
+2026/10/09 14:33:11 bob   read t from z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d's unlock at contract height 768 (accepted: true)
+2026/10/09 14:33:11 bob   is at "secret"
+2026/10/09 14:33:11 bob   claims Alice's entry with the completed signature: 1776f3d1994a60134be4e8d9ee5aba9cc16d00de5945e28823d0d417e9a5b257
+2026/10/09 14:33:11 bob   is at "claiming"
+2026/10/09 14:33:21 alice done: swapped
+2026/10/09 14:33:21 alice is at "done"
+2026/10/09 14:33:41 bob   is at "sweeping"
+2026/10/09 14:33:41 bob   done: swapped
+2026/10/09 14:33:41 bob   is at "done"
+2026/10/09 14:33:41 alice ended: swapped
+2026/10/09 14:33:41 bob   ended: swapped
+done: swapped. Alice's entry 5db24c85b7df2a3feecb934cb0d68f10bcbceacc2256cffc87764aecb16e6fe2, Bob's 93f85e090272b7e52bbcc7777f304f988c219d120639e11cddadd881179dccbe; on the chain, two signatures by two keys nobody has seen before
+exit 0
+Fri, Oct  9, 2026  6:33:41 PM

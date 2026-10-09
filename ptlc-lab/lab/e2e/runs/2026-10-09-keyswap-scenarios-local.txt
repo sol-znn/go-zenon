@@ -1,0 +1,42 @@
+Fri, Oct  9, 2026  6:43:38 PM
+18:43:40   ok   the page shows a card for each of the lab's 21 scenarios: 21 cards
+18:43:40   ok   the page shows the chain is live: Chain live, block 9,573
+18:43:40 Swap with no secret on the chain (swap-key, 13 steps)
+18:45:26     [done] Alice and Bob each make a fresh key and agree the trade: Keys made for this swap and used for nothing else. Alice also makes a secret, and keeps it
+18:45:26     [done, accepted] Alice locks 10 QSR to her key, payable only to Bob, for 10 minutes: The contract accepted
+18:45:26     [done] Alice gives Bob a half-finished signature for her lock: It says "pay Bob" for her lock, and only the secret is missing from it
+18:45:26     [done] Bob checks her lock and that signature: Right amount, her key, pays only Bob, outlasts the lock he is about to make, and the signature fits it
+18:45:26     [done, accepted] Bob locks 1 ZNN to his key, payable only to Alice, ending 5 minutes sooner: The contract accepted
+18:45:26     [done] Bob gives Alice a half-finished signature for his lock: It says "pay Alice" for his lock, with the same piece missing
+18:45:26     [done] Alice checks his lock and that signature: Right amount, his key, pays only Alice, and the signature fits it
+18:45:26     [done, accepted] Alice finishes it with her secret and takes the ZNN: The contract accepted
+18:45:26     [done] Alice receives 1 ZNN: 1 ZNN paid to Alice
+18:45:26     [done] Bob works the secret out from her finished signature: Her finished signature, less the half-finished one he gave her, is the secret. Only he can do that sum
+18:45:26     [done, accepted] Bob finishes hers with it and takes the QSR: The contract accepted
+18:45:26     [done] Bob receives 10 QSR: 10 QSR paid to Bob
+18:45:26     [done] The secret is nowhere on the chain: Two keys nobody has seen before and one ordinary signature by each. Nothing ties the two locks together
+18:45:26   ok   swap-key: the page says it passed: Passed | Alice got 1 ZNN and Bob got 10 QSR, and the secret that tied the two locks together never appeared | 1 min 40 s; 105 s here
+18:45:26   ok   swap-key: all 13 steps are drawn settled: done done done done done done done done done done done done done
+18:45:26   ok   swap-key: each call is drawn with the outcome it was meant to meet: accepted accepted accepted accepted
+18:45:26 A key lock that does not say who it pays (swap-key-open, 12 steps)
+18:47:53     [done] Alice and Bob each make a fresh key and agree the trade: Keys made for this swap and used for nothing else. Alice also makes a secret, and keeps it
+18:47:53     [done, accepted] Alice locks 10 QSR to her key, naming nobody: The contract accepted
+18:47:53     [done] Alice gives Bob a half-finished signature that would pay him: It says "pay Bob" for her lock, and only the secret is missing from it
+18:47:53     [done] Bob does not check who her lock pays: The lab's client would have stopped here: the entry names no destination, so its key's owner can take it back at will
+18:47:53     [done, accepted] Bob locks 1 ZNN to his key, payable only to Alice: The contract accepted
+18:47:53     [done] Bob gives Alice a half-finished signature for his lock: It says "pay Alice" for his lock, with the same piece missing
+18:47:53     [done, accepted] Alice signs her own lock back to herself: The contract accepted
+18:47:53     [done] Alice receives her 10 QSR back: 10 QSR paid to Alice
+18:47:53     [done, accepted] Alice finishes Bob's signature and takes the ZNN: The contract accepted
+18:47:53     [done] Alice receives 1 ZNN: 1 ZNN paid to Alice
+18:47:53     [done] Bob works the secret out from her finished signature: Her finished signature, less the half-finished one he gave her, is the secret. Only he can do that sum
+18:47:53     [done, refused] Bob finishes the signature that would have paid him: The contract refused, as it should
+18:47:53   ok   swap-key-open: the page says it passed: Passed | Alice has Bob's 1 ZNN and all of her QSR. Her lock named nobody, so her own key could take it back, and Bob locked against it without looking | 2 min 24 s; 148 s here
+18:47:53   ok   swap-key-open: all 12 steps are drawn settled: done done done done done done done done done done done done
+18:47:53   ok   swap-key-open: each call is drawn with the outcome it was meant to meet: accepted accepted accepted accepted refused
+18:47:54 tally on the page (passed / failed / not run): 2 / 0 / 19
+18:47:55   ok   after a reload the last result is still shown, read back from the lab: Passed in 2 min 24 s
+
+All checks passed
+exit 0
+Fri, Oct  9, 2026  6:47:56 PM

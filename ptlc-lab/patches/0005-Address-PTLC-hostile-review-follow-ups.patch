@@ -1,0 +1,422 @@
+From 768063e7760dd5ac089b22a9c7266c1c82624d73 Mon Sep 17 00:00:00 2001
+From: 0x3639 <0x3639@protonmail.com>
+Date: Wed, 27 May 2026 07:38:23 -0500
+Subject: [PATCH 05/11] Address PTLC hostile review follow-ups
+
+(cherry picked from commit a43e0cb69c4008586a18f20241a98e1bfa820199)
+---
+ docs/ptlc/README.md                     |   2 +
+ docs/ptlc/SECURITY.md                   |   8 +-
+ vm/embedded/implementation/ptlc.go      |  29 ++-
+ vm/embedded/implementation/ptlc_test.go | 230 ++++++++++++++++++++++++
+ vm/embedded/tests/ptlc_test.go          |   6 +-
+ 5 files changed, 263 insertions(+), 12 deletions(-)
+
+diff --git a/docs/ptlc/README.md b/docs/ptlc/README.md
+index a41334d..21f78b2 100644
+--- a/docs/ptlc/README.md
++++ b/docs/ptlc/README.md
+@@ -42,6 +42,8 @@ PointTypeBIP340
+ 
+ `ProxyUnlock` accepts an explicit destination. Any caller can submit a valid `ProxyUnlock` proof, but the funds still go to the destination covered by the signature. This makes `ProxyUnlock` a bearer-proof flow: possession of a valid signature for `id` and `destination` is enough to submit the unlock transaction.
+ 
++The contract does not add a consensus restriction on destination class beyond the address encoded in the signed call. Wallets and higher-level protocols should reject zero, embedded, or otherwise unexpected destinations unless that exact destination is intentional for the protocol.
++
+ ## HTLC comparison
+ 
+ HTLC unlocks prove knowledge of a preimage for a stored hash digest. PTLC unlocks prove possession of a valid signature for a stored public key/point lock. In this implementation, the signature is an ordinary ED25519 or BIP340 signature over the PTLC unlock message; adaptor-signature scalar revelation is not enforced by the embedded contract.
+diff --git a/docs/ptlc/SECURITY.md b/docs/ptlc/SECURITY.md
+index bc6d472..544849e 100644
+--- a/docs/ptlc/SECURITY.md
++++ b/docs/ptlc/SECURITY.md
+@@ -39,6 +39,12 @@ PTLC storage keys must be exactly one prefix byte plus a hash. Empty, short, lon
+ 
+ Wallets and higher-level protocols should treat a `ProxyUnlock` signature as a bearer proof for that specific destination.
+ 
++Consensus does not distinguish user, embedded, or zero-like destination intent for `ProxyUnlock`; it verifies the signature over exactly the submitted destination. Wallets should apply stricter destination policy before asking users to sign.
++
++## Logging
++
++PTLC logs record signature hashes, not full submitted signatures. Unlock signatures are public witnesses after submission, but logging only hashes reduces accidental witness reuse in off-chain tooling.
++
+ ## Limitations
+ 
+ This implementation verifies ordinary ED25519 and BIP340 signatures. It does not specify adaptor signatures, scalar extraction, or a complete cross-chain PTLC swap protocol.
+@@ -52,4 +58,4 @@ Protocols that rely on adaptor-signature properties must document:
+ 
+ ## Dependency review
+ 
+-BIP340 support requires `github.com/btcsuite/btcd/btcec/v2/schnorr`. Avoid unrelated dependency upgrades in PTLC changes, and review `go.mod` and `go.sum` separately from contract logic.
++BIP340 support requires `github.com/btcsuite/btcd/btcec/v2/schnorr`. This dependency is consensus-critical after PTLC activation, so upgrades require dedicated BIP340 vector review. Avoid unrelated dependency upgrades in PTLC changes, and review `go.mod` and `go.sum` separately from contract logic.
+diff --git a/vm/embedded/implementation/ptlc.go b/vm/embedded/implementation/ptlc.go
+index 71b3222..dc04a47 100644
+--- a/vm/embedded/implementation/ptlc.go
++++ b/vm/embedded/implementation/ptlc.go
+@@ -3,10 +3,12 @@ package implementation
+ import (
+ 	"crypto/ed25519"
+ 	"encoding/base64"
++	"math/big"
+ 
+ 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+ 	"github.com/zenon-network/go-zenon/chain/nom"
+ 	"github.com/zenon-network/go-zenon/common"
++	"github.com/zenon-network/go-zenon/common/crypto"
+ 	"github.com/zenon-network/go-zenon/common/types"
+ 	"github.com/zenon-network/go-zenon/vm/constants"
+ 	"github.com/zenon-network/go-zenon/vm/embedded/definition"
+@@ -18,6 +20,18 @@ var (
+ 	ptlcLog = common.EmbeddedLogger.New("contract", "ptlc")
+ )
+ 
++func isPositiveAmount(amount *big.Int) bool {
++	return amount != nil && amount.Sign() > 0
++}
++
++func isZeroAmount(amount *big.Int) bool {
++	return amount != nil && amount.Sign() == 0
++}
++
++func signatureHashForLog(signature []byte) string {
++	return base64.StdEncoding.EncodeToString(crypto.Hash(signature))
++}
++
+ func checkPtlc(param definition.CreatePtlcParam) error {
+ 
+ 	if param.PointType != definition.PointTypeED25519 && param.PointType != definition.PointTypeBIP340 {
+@@ -116,9 +130,8 @@ func (p *CreatePtlcMethod) ValidateSendBlock(block *nom.AccountBlock) error {
+ 		return err
+ 	}
+ 
+-	// can't create empty ptlcs
+-	if block.Amount.Sign() == 0 {
+-		ptlcLog.Debug("invalid create - cannot create zero amount", "address", block.Address)
++	if !isPositiveAmount(block.Amount) {
++		ptlcLog.Debug("invalid create - amount must be positive", "address", block.Address)
+ 		return constants.ErrInvalidTokenOrAmount
+ 	}
+ 
+@@ -178,7 +191,7 @@ func (p *ReclaimPtlcMethod) ValidateSendBlock(block *nom.AccountBlock) error {
+ 		return constants.ErrUnpackError
+ 	}
+ 
+-	if block.Amount.Sign() > 0 {
++	if !isZeroAmount(block.Amount) {
+ 		return constants.ErrInvalidTokenOrAmount
+ 	}
+ 
+@@ -261,12 +274,12 @@ func unlockPtlc(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock
+ 	}
+ 
+ 	if err := verifyPtlcSignature(ptlcInfo, momentum.ChainIdentifier, id, destination, signature); err != nil {
+-		ptlcLog.Debug("invalid unlock - invalid signature", "id", ptlcInfo.Id, "address", sendBlock.Address, "destination", destination, "signature", base64.StdEncoding.EncodeToString(signature), "reason", err)
++		ptlcLog.Debug("invalid unlock - invalid signature", "id", ptlcInfo.Id, "address", sendBlock.Address, "destination", destination, "signature-hash", signatureHashForLog(signature), "reason", err)
+ 		return nil, err
+ 	}
+ 
+ 	common.DealWithErr(ptlcInfo.Delete(context.Storage()))
+-	ptlcLog.Debug("unlocked", "ptlcInfo", ptlcInfo, "destination", destination, "signature", base64.StdEncoding.EncodeToString(signature))
++	ptlcLog.Debug("unlocked", "ptlcInfo", ptlcInfo, "destination", destination, "signature-hash", signatureHashForLog(signature))
+ 
+ 	return []*nom.AccountBlock{
+ 		{
+@@ -295,7 +308,7 @@ func (p *UnlockPtlcMethod) ValidateSendBlock(block *nom.AccountBlock) error {
+ 		return constants.ErrUnpackError
+ 	}
+ 
+-	if block.Amount.Sign() > 0 {
++	if !isZeroAmount(block.Amount) {
+ 		return constants.ErrInvalidTokenOrAmount
+ 	}
+ 
+@@ -332,7 +345,7 @@ func (p *ProxyUnlockPtlcMethod) ValidateSendBlock(block *nom.AccountBlock) error
+ 		return constants.ErrUnpackError
+ 	}
+ 
+-	if block.Amount.Sign() > 0 {
++	if !isZeroAmount(block.Amount) {
+ 		return constants.ErrInvalidTokenOrAmount
+ 	}
+ 
+diff --git a/vm/embedded/implementation/ptlc_test.go b/vm/embedded/implementation/ptlc_test.go
+index 784acdd..2ce6dc7 100644
+--- a/vm/embedded/implementation/ptlc_test.go
++++ b/vm/embedded/implementation/ptlc_test.go
+@@ -2,6 +2,7 @@ package implementation
+ 
+ import (
+ 	"bytes"
++	"encoding/hex"
+ 	"math/big"
+ 	"testing"
+ 	"time"
+@@ -109,6 +110,235 @@ func TestPtlc_VerifySignatureStableErrors(t *testing.T) {
+ 	common.ExpectError(t, verifyPtlcSignature(info, chainIdentifier, id, destination, nil), constants.ErrInvalidPointType)
+ }
+ 
++type validatePtlcSendBlockMethod interface {
++	ValidateSendBlock(*nom.AccountBlock) error
++}
++
++func TestPtlc_ValidateAmountGuards(t *testing.T) {
++	id := types.Hash{}
++	signature := bytes.Repeat([]byte{1}, 64)
++
++	tests := []struct {
++		name   string
++		method validatePtlcSendBlockMethod
++		data   func() []byte
++		amount *big.Int
++		want   error
++	}{
++		{
++			name:   "create nil amount",
++			method: &CreatePtlcMethod{definition.CreatePtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName, defaultPtlc.ExpirationTime, defaultPtlc.PointType, defaultPtlc.PointLock)
++			},
++			amount: nil,
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "create negative amount",
++			method: &CreatePtlcMethod{definition.CreatePtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName, defaultPtlc.ExpirationTime, defaultPtlc.PointType, defaultPtlc.PointLock)
++			},
++			amount: big.NewInt(-1),
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "create positive amount",
++			method: &CreatePtlcMethod{definition.CreatePtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName, defaultPtlc.ExpirationTime, defaultPtlc.PointType, defaultPtlc.PointLock)
++			},
++			amount: big.NewInt(1),
++			want:   nil,
++		},
++		{
++			name:   "reclaim nil amount",
++			method: &ReclaimPtlcMethod{definition.ReclaimPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, id)
++			},
++			amount: nil,
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "reclaim negative amount",
++			method: &ReclaimPtlcMethod{definition.ReclaimPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, id)
++			},
++			amount: big.NewInt(-1),
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "reclaim zero amount",
++			method: &ReclaimPtlcMethod{definition.ReclaimPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, id)
++			},
++			amount: big.NewInt(0),
++			want:   nil,
++		},
++		{
++			name:   "unlock nil amount",
++			method: &UnlockPtlcMethod{definition.UnlockPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, id, signature)
++			},
++			amount: nil,
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "unlock negative amount",
++			method: &UnlockPtlcMethod{definition.UnlockPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, id, signature)
++			},
++			amount: big.NewInt(-1),
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "unlock zero amount",
++			method: &UnlockPtlcMethod{definition.UnlockPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, id, signature)
++			},
++			amount: big.NewInt(0),
++			want:   nil,
++		},
++		{
++			name:   "proxy unlock nil amount",
++			method: &ProxyUnlockPtlcMethod{definition.ProxyUnlockPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName, id, User1.Address, signature)
++			},
++			amount: nil,
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "proxy unlock negative amount",
++			method: &ProxyUnlockPtlcMethod{definition.ProxyUnlockPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName, id, User1.Address, signature)
++			},
++			amount: big.NewInt(-1),
++			want:   constants.ErrInvalidTokenOrAmount,
++		},
++		{
++			name:   "proxy unlock zero amount",
++			method: &ProxyUnlockPtlcMethod{definition.ProxyUnlockPtlcMethodName},
++			data: func() []byte {
++				return definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName, id, User1.Address, signature)
++			},
++			amount: big.NewInt(0),
++			want:   nil,
++		},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			common.ExpectError(t, test.method.ValidateSendBlock(&nom.AccountBlock{
++				Data:          test.data(),
++				Amount:        test.amount,
++				TokenStandard: types.ZnnTokenStandard,
++			}), test.want)
++		})
++	}
++}
++
++func mustDecodeHex(t *testing.T, value string) []byte {
++	t.Helper()
++
++	decoded, err := hex.DecodeString(value)
++	if err != nil {
++		t.Fatalf("invalid test vector hex: %v", err)
++	}
++	return decoded
++}
++
++// Selected BIP340 vectors from bitcoin/bips bip-0340/test-vectors.csv.
++func TestPtlc_BIP340OfficialVectors(t *testing.T) {
++	const (
++		message0 = "0000000000000000000000000000000000000000000000000000000000000000"
++		message1 = "243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"
++		pubKey0  = "F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9"
++		pubKey1  = "DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"
++	)
++
++	tests := []struct {
++		name          string
++		pubKey        string
++		message       string
++		signature     string
++		wantVerify    bool
++		wantPubKeyErr bool
++	}{
++		{
++			name:       "vector 0 valid",
++			pubKey:     pubKey0,
++			message:    message0,
++			signature:  "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
++			wantVerify: true,
++		},
++		{
++			name:       "vector 3 all-ff message valid",
++			pubKey:     "25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517",
++			message:    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
++			signature:  "7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3",
++			wantVerify: true,
++		},
++		{
++			name:       "vector 7 invalid signature",
++			pubKey:     pubKey1,
++			message:    message1,
++			signature:  "1FA62E331EDBC21C394792D2AB1100A7B432B013DF3F6FF4F99FCB33E0E1515F28890B3EDB6E7189B630448B515CE4F8622A954CFE545735AAEA5134FCCDB2BD",
++			wantVerify: false,
++		},
++		{
++			name:       "wrong message",
++			pubKey:     pubKey0,
++			message:    "0100000000000000000000000000000000000000000000000000000000000000",
++			signature:  "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
++			wantVerify: false,
++		},
++		{
++			name:       "wrong x-only public key",
++			pubKey:     pubKey1,
++			message:    message0,
++			signature:  "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
++			wantVerify: false,
++		},
++		{
++			name:          "vector 14 invalid public key",
++			pubKey:        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30",
++			message:       message1,
++			signature:     "6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E17776969E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B",
++			wantVerify:    false,
++			wantPubKeyErr: true,
++		},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			pubKey, err := schnorr.ParsePubKey(mustDecodeHex(t, test.pubKey))
++			if test.wantPubKeyErr {
++				if err == nil {
++					t.Fatalf("expected public key parse error")
++				}
++				return
++			}
++			common.FailIfErr(t, err)
++
++			signature, err := schnorr.ParseSignature(mustDecodeHex(t, test.signature))
++			common.FailIfErr(t, err)
++
++			if got := signature.Verify(mustDecodeHex(t, test.message), pubKey); got != test.wantVerify {
++				t.Fatalf("unexpected verification result: got %v want %v", got, test.wantVerify)
++			}
++		})
++	}
++}
++
+ type testPtlcContext struct {
+ 	store.Account
+ 	momentum *nom.Momentum
+diff --git a/vm/embedded/tests/ptlc_test.go b/vm/embedded/tests/ptlc_test.go
+index 86c6dde..0adf60c 100644
+--- a/vm/embedded/tests/ptlc_test.go
++++ b/vm/embedded/tests/ptlc_test.go
+@@ -121,7 +121,7 @@ func TestPtlc_zero(t *testing.T) {
+ 	defer z.SaveLogs(common.EmbeddedLogger).Equals(t, `
+ t=2001-09-09T01:46:50+0000 lvl=dbug msg=created module=embedded contract=spork spork="&{Id:d82f15026ad67abbc99786a9ed5b667ac578a78fb80df4ea573c22e727fd736a Name:spork-ptlc Description:activate spork for ptlc Activated:false EnforcementHeight:0}"
+ t=2001-09-09T01:47:00+0000 lvl=dbug msg=activated module=embedded contract=spork spork="&{Id:d82f15026ad67abbc99786a9ed5b667ac578a78fb80df4ea573c22e727fd736a Name:spork-ptlc Description:activate spork for ptlc Activated:true EnforcementHeight:9}"
+-t=2001-09-09T01:49:50+0000 lvl=dbug msg="invalid create - cannot create zero amount" module=embedded contract=ptlc address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz
++t=2001-09-09T01:49:50+0000 lvl=dbug msg="invalid create - amount must be positive" module=embedded contract=ptlc address=z1qzal6c5s9rjnnxd2z7dvdhjxpmmj4fmw56a0mz
+ `)
+ 	activatePtlc(t, z)
+ 
+@@ -583,7 +583,7 @@ t=2001-09-09T01:51:40+0000 lvl=dbug msg="invalid unlock - entry is expired" modu
+ 	// Sun Sep 09 2001 01:51:40 GMT+0000
+ 	// check the time in the logs
+ 
+-	// user2 tries to unlock expired with correct preimage
++	// user2 tries to unlock expired with correct signature
+ 	mh := ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address)
+ 	signature := g.User2.Sign(mh)
+ 	defer z.CallContract(&nom.AccountBlock{
+@@ -1063,7 +1063,7 @@ func TestPtlc_unlockBIP340(t *testing.T) {
+ 	}).Error(t, constants.ErrInvalidPointSignature)
+ 	z.InsertNewMomentum()
+ 
+-	// user2 unlocks with correct preimage
++	// user2 unlocks with correct signature
+ 	signature, _ := schnorr.Sign(prv2, mh)
+ 	sig := signature.Serialize()
+ 	defer z.CallContract(&nom.AccountBlock{
+-- 
+2.53.0.windows.2
+

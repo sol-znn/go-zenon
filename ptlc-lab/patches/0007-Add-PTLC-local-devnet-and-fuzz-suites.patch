@@ -1,0 +1,3267 @@
+From b5d91bbb142393d5d9edb4276ad8d8056b3c6f48 Mon Sep 17 00:00:00 2001
+From: 0x3639 <0x3639@protonmail.com>
+Date: Thu, 28 May 2026 03:22:38 -0500
+Subject: [PATCH 07/11] Add PTLC local devnet and fuzz suites
+
+(cherry picked from commit 7aee79aac83af912f2e99521915ce821f06367ee)
+---
+ .dockerignore                                 |   5 +
+ .gitignore                                    |   5 +
+ Dockerfile                                    |  50 ++
+ Makefile                                      |  30 +-
+ PTLC_DEVNET_HARDENING.md                      | 103 +++
+ README.md                                     |  32 +
+ cmd/devnet-keygen/main.go                     | 423 ++++++++++++
+ docker-compose.yml                            | 106 +++
+ docker/devnet/README.md                       | 207 ++++++
+ docker/devnet/entrypoint.sh                   |  33 +
+ docker/devnet/genesis.json                    | 183 +++++
+ docker/devnet/observer/config.json            |  37 +
+ docker/devnet/observer/network-private-key    |   1 +
+ docker/devnet/pillar/config.json              |  38 ++
+ docker/devnet/pillar/network-private-key      |   1 +
+ .../z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq  |  15 +
+ docker/devnet/pillar2/config.json             |  41 ++
+ docker/devnet/pillar2/network-private-key     |   1 +
+ .../z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un  |  15 +
+ docker/devnet/pillar3/config.json             |  41 ++
+ docker/devnet/pillar3/network-private-key     |   1 +
+ .../z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e  |  15 +
+ docker/devnet/rpc/config.json                 |  37 +
+ docker/devnet/rpc/network-private-key         |   1 +
+ docs/ptlc/README.md                           |  22 +
+ testnet/ptlc/ptlc_test.go                     | 643 ++++++++++++++++++
+ testnet/ptlc/rpc_relay_diagnostic_test.go     | 246 +++++++
+ testnet/ptlc/run-fuzz-suite.sh                | 180 +++++
+ testnet/ptlc/run-suite.sh                     |  94 +++
+ vm/embedded/implementation/ptlc_test.go       | 224 ++++++
+ vm/embedded/tests/ptlc_test.go                | 134 ++++
+ 31 files changed, 2963 insertions(+), 1 deletion(-)
+ create mode 100644 .dockerignore
+ create mode 100644 Dockerfile
+ create mode 100644 PTLC_DEVNET_HARDENING.md
+ create mode 100644 cmd/devnet-keygen/main.go
+ create mode 100644 docker-compose.yml
+ create mode 100644 docker/devnet/README.md
+ create mode 100755 docker/devnet/entrypoint.sh
+ create mode 100644 docker/devnet/genesis.json
+ create mode 100644 docker/devnet/observer/config.json
+ create mode 100644 docker/devnet/observer/network-private-key
+ create mode 100644 docker/devnet/pillar/config.json
+ create mode 100644 docker/devnet/pillar/network-private-key
+ create mode 100755 docker/devnet/pillar/wallet/z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq
+ create mode 100644 docker/devnet/pillar2/config.json
+ create mode 100644 docker/devnet/pillar2/network-private-key
+ create mode 100644 docker/devnet/pillar2/wallet/z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un
+ create mode 100644 docker/devnet/pillar3/config.json
+ create mode 100644 docker/devnet/pillar3/network-private-key
+ create mode 100644 docker/devnet/pillar3/wallet/z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e
+ create mode 100644 docker/devnet/rpc/config.json
+ create mode 100644 docker/devnet/rpc/network-private-key
+ create mode 100644 testnet/ptlc/ptlc_test.go
+ create mode 100644 testnet/ptlc/rpc_relay_diagnostic_test.go
+ create mode 100755 testnet/ptlc/run-fuzz-suite.sh
+ create mode 100644 testnet/ptlc/run-suite.sh
+
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000..1cdeec7
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,5 @@
++.git
++.gocache
++build
++devnet-keygen
++test-results
+diff --git a/.gitignore b/.gitignore
+index 2d28dd5..c223a83 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,6 +7,11 @@
+ .DS_Store
+ 
+ build/
++/devnet-keygen
++.gocache/
++
++# Generated test logs/reports include absolute local paths; keep them untracked.
++test-results/
+ 
+ # IDE
+ .vscode
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..bfb4452
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,50 @@
++# Build Stage
++FROM golang:1.20-alpine AS builder
++
++# Install build dependencies
++RUN apk add --no-cache make gcc musl-dev git
++
++# Set working directory
++WORKDIR /app
++
++# Copy go mod and sum files
++COPY go.mod go.sum ./
++
++# Download dependencies
++RUN go mod download
++
++# Copy the rest of the source code
++COPY . .
++
++# Build znnd
++RUN make znnd
++
++# Final Stage
++FROM alpine:latest
++
++# Install runtime dependencies (if any, like ca-certificates)
++RUN apk add --no-cache ca-certificates
++
++# Set working directory
++WORKDIR /root
++
++# Create the data directory
++RUN mkdir -p /root/.znn
++
++# Copy the binary from the builder stage
++COPY --from=builder /app/build/znnd /usr/local/bin/znnd
++
++# Bake committed devnet assets (genesis, per-role configs, pillar keystore + p2p key).
++COPY docker/devnet /devnet
++
++# Expose ports:
++# 35995: P2P
++# 35997: HTTP RPC
++# 35998: WS RPC
++EXPOSE 35995 35997 35998
++
++# Role-aware entrypoint (picks pillar|rpc via $ZNND_ROLE).
++COPY docker/devnet/entrypoint.sh /entrypoint.sh
++RUN chmod +x /entrypoint.sh
++
++ENTRYPOINT ["/entrypoint.sh"]
+diff --git a/Makefile b/Makefile
+index 710e19c..1220051 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,4 +1,4 @@
+-.PHONY: all clean znnd
++.PHONY: all clean znnd devnet-keys devnet-up devnet-down testnet-ptlc testnet-ptlc-keep ptlc-fuzz test-ptlc-fuzz
+ 
+ GO ?= latest
+ 
+@@ -23,6 +23,13 @@ LIBMAIN = $(shell pwd)/cmd/libznn
+ BUILDDIR = $(shell pwd)/build
+ GIT_COMMIT=$(shell git rev-parse HEAD)
+ GIT_COMMIT_FILE=$(shell pwd)/metadata/git_commit.go
++LOCAL_GOCACHE ?= $(shell pwd)/.gocache
++TESTNET_GO_TEST_FLAGS ?= -timeout 25m
++TESTNET_RESULTS_DIR ?= $(shell pwd)/test-results/ptlc
++PTLC_FUZZ_RESULTS_DIR ?= $(shell pwd)/test-results/ptlc-fuzz
++PTLC_FUZZ_UNIT_TIMEOUT ?= 120s
++PTLC_FUZZ_TIME ?= 5s
++PTLC_FUZZ_TIMEOUT ?= 45s
+ 
+ $(EXECUTABLE):
+ 	go build -o $(BUILDDIR)/$(EXECUTABLE) -buildmode=c-shared -tags libznn $(LIBMAIN)
+@@ -39,3 +46,24 @@ clean:
+ 	rm -r $(BUILDDIR)/
+ 
+ all: znnd libznn
++
++devnet-keys:
++	go run ./cmd/devnet-keygen $(if $(FORCE),--force,)
++
++devnet-up:
++	docker compose up -d --build
++
++devnet-down:
++	docker compose down -v
++
++testnet-ptlc:
++	sh -c 'set -e; trap "docker compose down -v" EXIT; docker compose down -v; docker compose up -d --build; PTLC_TESTNET_RPC="$${PTLC_TESTNET_RPC:-http://localhost:35997}" GOCACHE="$(LOCAL_GOCACHE)" TESTNET_GO_TEST_FLAGS="$(TESTNET_GO_TEST_FLAGS)" TESTNET_RESULTS_DIR="$(TESTNET_RESULTS_DIR)" bash testnet/ptlc/run-suite.sh'
++
++testnet-ptlc-keep:
++	docker compose up -d --build
++	PTLC_TESTNET_RPC="$${PTLC_TESTNET_RPC:-http://localhost:35997}" GOCACHE="$(LOCAL_GOCACHE)" TESTNET_GO_TEST_FLAGS="$(TESTNET_GO_TEST_FLAGS)" TESTNET_RESULTS_DIR="$(TESTNET_RESULTS_DIR)" bash testnet/ptlc/run-suite.sh
++
++ptlc-fuzz:
++	GOCACHE="$(LOCAL_GOCACHE)" PTLC_FUZZ_RESULTS_DIR="$(PTLC_FUZZ_RESULTS_DIR)" PTLC_FUZZ_UNIT_TIMEOUT="$(PTLC_FUZZ_UNIT_TIMEOUT)" PTLC_FUZZ_TIME="$(PTLC_FUZZ_TIME)" PTLC_FUZZ_TIMEOUT="$(PTLC_FUZZ_TIMEOUT)" bash testnet/ptlc/run-fuzz-suite.sh
++
++test-ptlc-fuzz: ptlc-fuzz
+diff --git a/PTLC_DEVNET_HARDENING.md b/PTLC_DEVNET_HARDENING.md
+new file mode 100644
+index 0000000..836d05b
+--- /dev/null
++++ b/PTLC_DEVNET_HARDENING.md
+@@ -0,0 +1,103 @@
++# PTLC Local Devnet Hardening Changes
++
++This note summarizes the local devnet hardening changes made to improve the reliability of PTLC testing through the dedicated RPC node.
++
++## Summary
++
++The devnet was changed from a mostly bootstrap-dependent topology into a small mesh. The dedicated RPC node now has a stable p2p identity and multiple peer paths to reach block-producing pillars. A new non-pillar observer node was added to participate in p2p relay and sync without producing momentums.
++
++After these changes, the full PTLC test suite passed using the dedicated RPC endpoint as the default.
++
++## Topology Changes
++
++- Added a new non-pillar `observer` service in `docker-compose.yml`.
++- The observer container is named `znnd-devnet-observer`.
++- The observer uses static IP `172.30.0.14`.
++- The observer does not produce momentums; it only participates in p2p relay and sync.
++- Added an `observer-data` Docker volume.
++- Updated the `rpc` service to depend on `observer` as well as `pillar`, so the observer is part of the local network before RPC starts.
++
++## Keygen And Config Generation
++
++- Added a `relaySpec` concept in `cmd/devnet-keygen/main.go` for non-pillar nodes.
++- Defined two relay nodes:
++  - `rpc` at `172.30.0.11`
++  - `observer` at `172.30.0.14`
++- Set both relay nodes to use `MinPeers=2`.
++- Updated key generation to create stable `network-private-key` files for both `rpc` and `observer`.
++- Updated key generation to build static enode URLs for all devnet nodes, not just pillars.
++- Added generic relay config generation for `rpc` and `observer`.
++
++## Peering Changes
++
++- `rpc` now seeds all three pillars plus `observer`.
++- `observer` now seeds all three pillars plus `rpc`.
++- `pillar2` now seeds `pillar1` and `pillar3`.
++- `pillar3` now seeds `pillar1` and `pillar2`.
++
++This gives transactions submitted to the dedicated RPC node multiple paths to reach producing pillars.
++
++## Generated Files
++
++The following generated devnet files were added:
++
++- `docker/devnet/rpc/network-private-key`
++- `docker/devnet/observer/config.json`
++- `docker/devnet/observer/network-private-key`
++
++## Entrypoint Cleanup
++
++- Updated `docker/devnet/entrypoint.sh` so it treats any `/devnet/<role>` directory as a valid role.
++- This allows new roles such as `observer` to work without hard-coding every possible role name in the error message.
++
++## Test Default Change
++
++- The PTLC testnet suite now defaults to the dedicated RPC node:
++
++```sh
++make testnet-ptlc
++```
++
++- The default RPC endpoint is:
++
++```text
++http://localhost:35997
++```
++
++- The pillar RPC endpoint is still available as a fallback or comparison target:
++
++```sh
++PTLC_TESTNET_RPC=http://localhost:35991 make testnet-ptlc
++```
++
++## Test Results
++
++With the hardened topology, the full PTLC test suite passed through the dedicated RPC node:
++
++```text
++ok github.com/zenon-network/go-zenon/testnet/ptlc 622.453s
++```
++
++The suite writes tester-friendly artifacts under:
++
++```text
++test-results/ptlc/<timestamp>/
++```
++
++Each run includes:
++
++- `go-test.log`: full verbose Go test output.
++- `summary.md`: suite status, RPC endpoint, each test case, what it covers, duration, and package result.
++
++## Why This Helps
++
++Before this change, the dedicated RPC node mostly depended on one bootstrap path through `pillar1`. That made transaction propagation occasionally slow or flaky.
++
++After this change, the dedicated RPC node has:
++
++- a stable p2p identity,
++- multiple pillar seed peers,
++- an additional non-pillar observer relay peer,
++- and better cross-peering between producing pillars.
++
++In plain English: the local devnet now behaves more like a small real network. Transactions submitted to the RPC node have more than one route to reach producers, and the RPC node has more than one route to stay synced.
+diff --git a/README.md b/README.md
+index a22614a..6eea211 100644
+--- a/README.md
++++ b/README.md
+@@ -15,3 +15,35 @@ make znnd
+ Since version `0.0.2`, `znnd` is configured with the Alphanet Genesis and default seeders.
+ 
+ Use [znn-controller](https://github.com/zenon-network/znn_controller_dart) to configure your full node. For more information please consult the [Wiki](https://github.com/zenon-network/znn-wiki).
++
++## PTLC local testing
++
++This branch includes a local PTLC development and test workflow:
++
++- A dockerized five-node devnet with three producing pillars, one dedicated RPC node, and one non-pillar observer/relay node.
++- Genesis activation for the bridge/liquidity and PTLC sporks on the local devnet.
++- Live PTLC RPC tests that run through the dedicated RPC node by default.
++- Unit, adversarial, and live fuzz coverage for PTLC validation, signature-domain binding, replay competition, expiration, reclaim, and accounting behavior.
++
++Useful commands:
++
++```shell
++make devnet-up          # start the local docker devnet
++make devnet-down        # stop and wipe local devnet state
++make testnet-ptlc       # reset devnet, run live PTLC RPC tests, tear down
++make testnet-ptlc-keep  # run live PTLC RPC tests and leave devnet running
++make ptlc-fuzz          # run PTLC unit/adversarial tests and live fuzz targets
++```
++
++Test reports are written under `test-results/`:
++
++- `test-results/ptlc/<timestamp>/summary.md` for live RPC testnet runs.
++- `test-results/ptlc-fuzz/<timestamp>/summary.md` for unit/adversarial/fuzz runs.
++
++`test-results/` is intentionally ignored because the generated summaries and raw logs include machine-local absolute paths.
++
++More detail:
++
++- [PTLC contract docs](docs/ptlc/README.md)
++- [Local devnet docs](docker/devnet/README.md)
++- [Local devnet hardening notes](PTLC_DEVNET_HARDENING.md)
+diff --git a/cmd/devnet-keygen/main.go b/cmd/devnet-keygen/main.go
+new file mode 100644
+index 0000000..2f99d8b
+--- /dev/null
++++ b/cmd/devnet-keygen/main.go
+@@ -0,0 +1,423 @@
++package main
++
++import (
++	"encoding/json"
++	"flag"
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/tyler-smith/go-bip39"
++
++	"github.com/zenon-network/go-zenon/chain/genesis"
++	"github.com/zenon-network/go-zenon/common/types"
++	"github.com/zenon-network/go-zenon/p2p/discover"
++	"github.com/zenon-network/go-zenon/wallet"
++
++	"github.com/ethereum/go-ethereum/crypto"
++)
++
++const (
++	devMnemonic = "abstract affair idle position alien fluid board ordinary exist afraid chapter wood wood guide sun walnut crew perfect place firm poverty model side million"
++	devPassword = "devnet"
++
++	devnetDir   = "docker/devnet"
++	genesisFile = "docker/devnet/genesis.json"
++
++	// Total derivations exposed in the dev table. 0/4/6 are producer keys
++	// (live in pillar containers); 1/5/7 are pillar owners (held by the
++	// user); 2 is spork; 3 is a general dev account.
++	derivationCount uint32 = 8
++)
++
++// pillarSpec describes one of the three devnet pillars. The producer key for
++// each pillar is committed under <Dir>/wallet/<producer-address>; the owner
++// is referenced from genesis.json only and is never put in a container.
++type pillarSpec struct {
++	Role          string // also the docker-compose service name and ZNND_ROLE env var
++	Dir           string // <repo>/docker/devnet/<Role>
++	IP            string // static IPv4 on the znnd-devnet bridge
++	ProducerIndex uint32
++	OwnerIndex    uint32
++	IsBootstrap   bool // bootstrap pillars start with no seeders + MinPeers=0
++}
++
++var pillars = []pillarSpec{
++	{Role: "pillar", Dir: filepath.Join(devnetDir, "pillar"), IP: "172.30.0.10", ProducerIndex: 0, OwnerIndex: 1, IsBootstrap: true},
++	{Role: "pillar2", Dir: filepath.Join(devnetDir, "pillar2"), IP: "172.30.0.12", ProducerIndex: 4, OwnerIndex: 5},
++	{Role: "pillar3", Dir: filepath.Join(devnetDir, "pillar3"), IP: "172.30.0.13", ProducerIndex: 6, OwnerIndex: 7},
++}
++
++type relaySpec struct {
++	Role     string
++	Dir      string
++	IP       string
++	MinPeers int
++}
++
++var relays = []relaySpec{
++	{Role: "rpc", Dir: filepath.Join(devnetDir, "rpc"), IP: "172.30.0.11", MinPeers: 2},
++	{Role: "observer", Dir: filepath.Join(devnetDir, "observer"), IP: "172.30.0.14", MinPeers: 2},
++}
++
++func main() {
++	force := flag.Bool("force", false, "overwrite existing keystores and network-private-keys")
++	verifyGenesis := flag.String("verify-genesis", "", "path to genesis.json to validate (skips key generation)")
++	flag.Parse()
++
++	if *verifyGenesis != "" {
++		if err := runVerifyGenesis(*verifyGenesis); err != nil {
++			fmt.Fprintf(os.Stderr, "verify-genesis failed: %v\n", err)
++			os.Exit(1)
++		}
++		return
++	}
++
++	if err := run(*force); err != nil {
++		fmt.Fprintf(os.Stderr, "devnet-keygen failed: %v\n", err)
++		os.Exit(1)
++	}
++}
++
++func loadChainIdentifier(path string) (uint64, error) {
++	f, err := os.Open(path)
++	if err != nil {
++		return 0, err
++	}
++	defer f.Close()
++	cfg := new(genesis.GenesisConfig)
++	if err := json.NewDecoder(f).Decode(cfg); err != nil {
++		return 0, fmt.Errorf("decode genesis: %w", err)
++	}
++	return cfg.ChainIdentifier, nil
++}
++
++func run(force bool) error {
++	chainId, err := loadChainIdentifier(genesisFile)
++	if err != nil {
++		return fmt.Errorf("load chain identifier: %w", err)
++	}
++	fmt.Printf("ChainIdentifier: %d (from %s)\n", chainId, genesisFile)
++
++	entropy, err := bip39.EntropyFromMnemonic(devMnemonic)
++	if err != nil {
++		return fmt.Errorf("decode mnemonic: %w", err)
++	}
++
++	ks, err := keystoreFromEntropy(entropy)
++	if err != nil {
++		return fmt.Errorf("derive keystore: %w", err)
++	}
++
++	addrs := make([]types.Address, derivationCount)
++	for i := uint32(0); i < derivationCount; i++ {
++		_, kp, err := ks.DeriveForIndexPath(i)
++		if err != nil {
++			return fmt.Errorf("derive index %d: %w", i, err)
++		}
++		addrs[i] = kp.Address
++	}
++
++	// Pass 1: write keystores + network-private-keys per pillar.
++	for _, p := range pillars {
++		producer := addrs[p.ProducerIndex]
++		walletDir := filepath.Join(p.Dir, "wallet")
++		if err := os.MkdirAll(walletDir, 0o755); err != nil {
++			return err
++		}
++		keyfilePath := filepath.Join(walletDir, producer.String())
++		if force || !fileExists(keyfilePath) {
++			if err := writeKeystore(ks, producer, keyfilePath); err != nil {
++				return err
++			}
++			fmt.Printf("wrote keystore: %s\n", keyfilePath)
++		} else {
++			fmt.Printf("keystore already exists, leaving in place: %s (use --force to overwrite)\n", keyfilePath)
++		}
++
++		netKeyPath := filepath.Join(p.Dir, "network-private-key")
++		if force || !fileExists(netKeyPath) {
++			k, err := crypto.GenerateKey()
++			if err != nil {
++				return fmt.Errorf("generate p2p key for %s: %w", p.Role, err)
++			}
++			if err := crypto.SaveECDSA(netKeyPath, k); err != nil {
++				return fmt.Errorf("save p2p key for %s: %w", p.Role, err)
++			}
++			fmt.Printf("wrote network-private-key: %s\n", netKeyPath)
++		} else {
++			fmt.Printf("network-private-key already exists: %s (use --force to regenerate)\n", netKeyPath)
++		}
++	}
++	for _, r := range relays {
++		netKeyPath := filepath.Join(r.Dir, "network-private-key")
++		if err := os.MkdirAll(filepath.Dir(netKeyPath), 0o755); err != nil {
++			return err
++		}
++		if force || !fileExists(netKeyPath) {
++			k, err := crypto.GenerateKey()
++			if err != nil {
++				return fmt.Errorf("generate p2p key for %s: %w", r.Role, err)
++			}
++			if err := crypto.SaveECDSA(netKeyPath, k); err != nil {
++				return fmt.Errorf("save p2p key for %s: %w", r.Role, err)
++			}
++			fmt.Printf("wrote network-private-key: %s\n", netKeyPath)
++		} else {
++			fmt.Printf("network-private-key already exists: %s (use --force to regenerate)\n", netKeyPath)
++		}
++	}
++
++	// Pass 2: load each p2p key, build static enodes for every devnet node.
++	enodes := make(map[string]string, len(pillars)+len(relays))
++	var bootstrapEnode string
++	for _, p := range pillars {
++		k, err := crypto.LoadECDSA(filepath.Join(p.Dir, "network-private-key"))
++		if err != nil {
++			return fmt.Errorf("load p2p key for %s: %w", p.Role, err)
++		}
++		// Seeder parsing in p2p/discover requires a numeric IP, not a hostname,
++		// so we point at the static IPs reserved in docker-compose.yml.
++		enode := fmt.Sprintf("enode://%s@%s:35995", discover.PubkeyID(&k.PublicKey).String(), p.IP)
++		enodes[p.Role] = enode
++		if p.IsBootstrap {
++			bootstrapEnode = enode
++		}
++	}
++	for _, r := range relays {
++		k, err := crypto.LoadECDSA(filepath.Join(r.Dir, "network-private-key"))
++		if err != nil {
++			return fmt.Errorf("load p2p key for %s: %w", r.Role, err)
++		}
++		enodes[r.Role] = fmt.Sprintf("enode://%s@%s:35995", discover.PubkeyID(&k.PublicKey).String(), r.IP)
++	}
++	if bootstrapEnode == "" {
++		return fmt.Errorf("no bootstrap pillar configured")
++	}
++
++	// Pass 3: write per-node configs. Relays seed from all pillars plus each other
++	// so transaction ingress is not dependent on a single bootstrap connection.
++	for _, p := range pillars {
++		producer := addrs[p.ProducerIndex]
++		seeders := []string{}
++		minPeers := 0
++		if !p.IsBootstrap {
++			seeders = pillarSeedersExcept(enodes, p.Role)
++			minPeers = 1
++		}
++		cfgPath := filepath.Join(p.Dir, "config.json")
++		if err := writePillarConfig(cfgPath, p.Role, producer, p.ProducerIndex, seeders, minPeers); err != nil {
++			return err
++		}
++	}
++	for _, r := range relays {
++		if err := writeRelayConfig(filepath.Join(r.Dir, "config.json"), r.Role, relaySeedersExcept(enodes, r.Role), r.MinPeers); err != nil {
++			return err
++		}
++	}
++
++	fmt.Println()
++	fmt.Println("Dev addresses (BIP-44 m/44'/73404'/i'):")
++	roleByIdx := map[uint32]string{
++		0: "pillar 1 producer",
++		1: "pillar 1 owner / dev wallet",
++		2: "spork address",
++		3: "general dev account",
++		4: "pillar 2 producer",
++		5: "pillar 2 owner",
++		6: "pillar 3 producer",
++		7: "pillar 3 owner",
++	}
++	for i := uint32(0); i < derivationCount; i++ {
++		fmt.Printf("  index %d (%-28s): %s\n", i, roleByIdx[i], addrs[i])
++	}
++	fmt.Println()
++	for _, p := range pillars {
++		fmt.Printf("%s enode: %s\n", p.Role, enodes[p.Role])
++	}
++	for _, r := range relays {
++		fmt.Printf("%s enode: %s\n", r.Role, enodes[r.Role])
++	}
++	return nil
++}
++
++func writeKeystore(ks *wallet.KeyStore, producer types.Address, dst string) error {
++	kf, err := ks.Encrypt(devPassword)
++	if err != nil {
++		return fmt.Errorf("encrypt keystore: %w", err)
++	}
++	// KeyFile.Path has no JSON tag, so it ends up in the serialised JSON.
++	// wallet.Manager keys its in-memory map on the value read back from disk,
++	// so we have to write the *container* path here (where znnd will read it
++	// from) rather than the host path.
++	kf.Path = "/root/.znn/wallet/" + producer.String()
++	b, err := json.MarshalIndent(kf, "", "    ")
++	if err != nil {
++		return fmt.Errorf("marshal keystore: %w", err)
++	}
++	if err := os.WriteFile(dst, b, 0o600); err != nil {
++		return fmt.Errorf("write keystore: %w", err)
++	}
++	return nil
++}
++
++// keystoreFromEntropy mirrors wallet.keyStoreFromEntropy (which is unexported).
++// It builds a KeyStore directly from raw entropy and seeds the BaseAddress
++// from the index-0 derivation, matching wallet/keystore.go:24-44.
++func keystoreFromEntropy(entropy []byte) (*wallet.KeyStore, error) {
++	mnemonic, err := bip39.NewMnemonic(entropy)
++	if err != nil {
++		return nil, err
++	}
++	ks := &wallet.KeyStore{
++		Entropy:  entropy,
++		Seed:     bip39.NewSeed(mnemonic, ""),
++		Mnemonic: mnemonic,
++	}
++	_, kp, err := ks.DeriveForIndexPath(0)
++	if err != nil {
++		return nil, err
++	}
++	ks.BaseAddress = kp.Address
++	return ks, nil
++}
++
++func writePillarConfig(path, name string, producer types.Address, producerIdx uint32, seeders []string, minPeers int) error {
++	cfg := map[string]any{
++		"DataPath":    "/root/.znn",
++		"WalletPath":  "/root/.znn/wallet",
++		"GenesisFile": "/root/.znn/genesis.json",
++		"Name":        "devnet-" + name,
++		"LogLevel":    "info",
++		"Producer": map[string]any{
++			"Address":     producer.String(),
++			"Index":       producerIdx,
++			"KeyFilePath": producer.String(),
++			"Password":    devPassword,
++		},
++		"RPC": map[string]any{
++			"EnableHTTP":       true,
++			"EnableWS":         true,
++			"HTTPHost":         "0.0.0.0",
++			"HTTPPort":         35997,
++			"WSHost":           "0.0.0.0",
++			"WSPort":           35998,
++			"Endpoints":        []string{},
++			"HTTPVirtualHosts": []string{"*"},
++			"HTTPCors":         []string{"*"},
++			"WSOrigins":        []string{"*"},
++		},
++		"Net": map[string]any{
++			"ListenHost":        "0.0.0.0",
++			"ListenPort":        35995,
++			"MinPeers":          minPeers,
++			"MinConnectedPeers": minPeers,
++			"Seeders":           seeders,
++		},
++	}
++	return writeJSON(path, cfg)
++}
++
++func writeRelayConfig(path, name string, seeders []string, minPeers int) error {
++	cfg := map[string]any{
++		"DataPath":    "/root/.znn",
++		"WalletPath":  "/root/.znn/wallet",
++		"GenesisFile": "/root/.znn/genesis.json",
++		"Name":        "devnet-" + name,
++		"LogLevel":    "info",
++		"RPC": map[string]any{
++			"EnableHTTP":       true,
++			"EnableWS":         true,
++			"HTTPHost":         "0.0.0.0",
++			"HTTPPort":         35997,
++			"WSHost":           "0.0.0.0",
++			"WSPort":           35998,
++			"Endpoints":        []string{},
++			"HTTPVirtualHosts": []string{"*"},
++			"HTTPCors":         []string{"*"},
++			"WSOrigins":        []string{"*"},
++		},
++		"Net": map[string]any{
++			"ListenHost":        "0.0.0.0",
++			"ListenPort":        35995,
++			"MinPeers":          minPeers,
++			"MinConnectedPeers": minPeers,
++			"Seeders":           seeders,
++		},
++	}
++	return writeJSON(path, cfg)
++}
++
++func pillarSeedersExcept(enodes map[string]string, self string) []string {
++	seeders := make([]string, 0, len(pillars)-1)
++	for _, p := range pillars {
++		if p.Role != self {
++			seeders = append(seeders, enodes[p.Role])
++		}
++	}
++	return seeders
++}
++
++func relaySeedersExcept(enodes map[string]string, self string) []string {
++	seeders := make([]string, 0, len(pillars)+len(relays)-1)
++	for _, p := range pillars {
++		seeders = append(seeders, enodes[p.Role])
++	}
++	for _, r := range relays {
++		if r.Role != self {
++			seeders = append(seeders, enodes[r.Role])
++		}
++	}
++	return seeders
++}
++
++func writeJSON(path string, v any) error {
++	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++		return err
++	}
++	b, err := json.MarshalIndent(v, "", "    ")
++	if err != nil {
++		return err
++	}
++	if err := os.WriteFile(path, b, 0o644); err != nil {
++		return err
++	}
++	fmt.Printf("wrote config: %s\n", path)
++	return nil
++}
++
++func fileExists(p string) bool {
++	_, err := os.Stat(p)
++	return err == nil
++}
++
++func runVerifyGenesis(path string) error {
++	f, err := os.Open(path)
++	if err != nil {
++		return err
++	}
++	defer f.Close()
++
++	cfg := new(genesis.GenesisConfig)
++	if err := json.NewDecoder(f).Decode(cfg); err != nil {
++		return fmt.Errorf("decode genesis: %w", err)
++	}
++	if err := genesis.CheckGenesis(cfg); err != nil {
++		return fmt.Errorf("CheckGenesis: %w", err)
++	}
++
++	if cfg.PillarConfig == nil || len(cfg.PillarConfig.Pillars) != len(pillars) {
++		return fmt.Errorf("expected exactly %d pillars, got %d", len(pillars), len(cfg.PillarConfig.Pillars))
++	}
++	if cfg.TokenConfig == nil || len(cfg.TokenConfig.Tokens) == 0 {
++		return fmt.Errorf("no tokens defined")
++	}
++	for _, t := range cfg.TokenConfig.Tokens {
++		if t.TotalSupply == nil || t.TotalSupply.Sign() == 0 {
++			return fmt.Errorf("token %s has zero TotalSupply (likely JSON tag mismatch)", t.TokenName)
++		}
++	}
++	fmt.Printf("genesis OK: ChainIdentifier=%d, pillars=%d, tokens=%d\n",
++		cfg.ChainIdentifier, len(cfg.PillarConfig.Pillars), len(cfg.TokenConfig.Tokens))
++	return nil
++}
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..663953d
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,106 @@
++services:
++  pillar:
++    build:
++      context: .
++      dockerfile: Dockerfile
++    image: go-zenon-devnet:latest
++    container_name: znnd-devnet-pillar
++    restart: unless-stopped
++    environment:
++      ZNND_ROLE: pillar
++    expose:
++      - "35995"
++    ports:
++      - "35991:35997" # HTTP RPC write endpoint for local integration tests
++    volumes:
++      - pillar-data:/root/.znn
++    networks:
++      devnet:
++        ipv4_address: 172.30.0.10
++
++  pillar2:
++    image: go-zenon-devnet:latest
++    container_name: znnd-devnet-pillar2
++    restart: unless-stopped
++    depends_on:
++      - pillar
++    environment:
++      ZNND_ROLE: pillar2
++    expose:
++      - "35995"
++    volumes:
++      - pillar2-data:/root/.znn
++    networks:
++      devnet:
++        ipv4_address: 172.30.0.12
++
++  pillar3:
++    image: go-zenon-devnet:latest
++    container_name: znnd-devnet-pillar3
++    restart: unless-stopped
++    depends_on:
++      - pillar
++    environment:
++      ZNND_ROLE: pillar3
++    expose:
++      - "35995"
++    volumes:
++      - pillar3-data:/root/.znn
++    networks:
++      devnet:
++        ipv4_address: 172.30.0.13
++
++  rpc:
++    image: go-zenon-devnet:latest
++    container_name: znnd-devnet-rpc
++    restart: unless-stopped
++    depends_on:
++      - pillar
++      - observer
++    environment:
++      ZNND_ROLE: rpc
++    ports:
++      - "35997:35997" # HTTP RPC
++      - "35998:35998" # WS RPC
++    volumes:
++      - rpc-data:/root/.znn
++    networks:
++      devnet:
++        ipv4_address: 172.30.0.11
++
++  observer:
++    image: go-zenon-devnet:latest
++    container_name: znnd-devnet-observer
++    restart: unless-stopped
++    depends_on:
++      - pillar
++    environment:
++      ZNND_ROLE: observer
++    expose:
++      - "35995"
++    volumes:
++      - observer-data:/root/.znn
++    networks:
++      devnet:
++        ipv4_address: 172.30.0.14
++
++networks:
++  devnet:
++    name: znnd-devnet
++    driver: bridge
++    ipam:
++      driver: default
++      config:
++        - subnet: 172.30.0.0/24
++
++volumes:
++  pillar-data:
++    driver: local
++  pillar2-data:
++    driver: local
++  pillar3-data:
++    driver: local
++  rpc-data:
++    driver: local
++  observer-data:
++    driver: local
+diff --git a/docker/devnet/README.md b/docker/devnet/README.md
+new file mode 100644
+index 0000000..08dc4b9
+--- /dev/null
++++ b/docker/devnet/README.md
+@@ -0,0 +1,207 @@
++# go-zenon devnet
++
++Self-contained five-node Network of Momentum (NoM) for local development.
++Three pillars produce in rotation, while a public RPC node and a non-pillar
++observer node keep the transaction relay path closer to a real testnet.
++Chain ID `69`, fully isolated from mainnet. This local PTLC testnet variant also
++activates the `bridge-liq` and `ptlc` sporks at genesis so the PTLC
++embedded contract is available once the network has produced past the
++genesis momentum.
++
++## Topology
++
++| Service    | Container               | Static IP      | Role                                           | Host ports        |
++|------------|-------------------------|----------------|------------------------------------------------|-------------------|
++| `pillar`   | `znnd-devnet-pillar`    | `172.30.0.10`  | Pillar 1 producer + bootstrap (`MinPeers=0`)   | `35991` HTTP RPC  |
++| `pillar2`  | `znnd-devnet-pillar2`   | `172.30.0.12`  | Pillar 2 producer                              | _none exposed_    |
++| `pillar3`  | `znnd-devnet-pillar3`   | `172.30.0.13`  | Pillar 3 producer                              | _none exposed_    |
++| `rpc`      | `znnd-devnet-rpc`       | `172.30.0.11`  | Public RPC ingress                             | `35997`, `35998`  |
++| `observer` | `znnd-devnet-observer`  | `172.30.0.14`  | Non-pillar observer / relay peer               | _none exposed_    |
++
++All five share the bridge network `znnd-devnet` (`172.30.0.0/24`).
++The RPC and observer nodes have stable p2p identities and seed from all
++three pillars plus each other. Pillar 2 and pillar 3 also seed each other,
++which keeps the dedicated RPC path from depending on a single bootstrap
++connection.
++
++### Chain ID vs Network ID
++
++The `ChainIdentifier` in `genesis.json` (`69`) is used as **both** the
++chain ID and the p2p network ID. There is no separate network ID field —
++the node passes `ChainIdentifier` directly to the protocol manager at
++startup (`zenon/zenon.go`), which uses it during the peer handshake to
++reject connections from nodes on other networks. Every momentum and
++account block also carries this value, and it participates in block hash
++computation.
++
++Clients connecting to the devnet should set `chainId` to `69`. The
++network layer handles `networkId` automatically from the same genesis
++value.
++
++Three pillars is the minimum that makes governance interesting on
++devnet: any two voting Yes clears both the strict-majority and 33%
++quorum gates the Accelerator and spork contracts use to approve
++proposals.
++
++## Bring it up
++
++```sh
++make devnet-up      # docker compose up -d --build
++make devnet-down    # docker compose down -v   (wipes chain state)
++make testnet-ptlc   # reset devnet, run PTLC live-RPC tests, tear down
++make ptlc-fuzz      # run PTLC unit/adversarial tests and live fuzz targets
++```
++
++`down -v` is the reset button — the next `up` reproduces the same
++genesis hash because keystores, network-private-keys, `genesis.json`,
++and configs are all committed under `docker/devnet/`.
++
++`make testnet-ptlc` writes tester-friendly artifacts under
++`test-results/ptlc/<timestamp>/`:
++
++- `go-test.log` is the full verbose `go test` stream.
++- `summary.md` lists the RPC endpoint, suite status, each test case, and
++  the package result.
++
++`make ptlc-fuzz` writes the same style of tester-friendly artifacts
++under `test-results/ptlc-fuzz/<timestamp>/`:
++
++- `unit-adversarial.log` is the verbose PTLC unit/adversarial test stream.
++- `fuzz-*.log` files capture each live Go fuzz target run.
++- `summary.md` lists the suite status, each test case, what it covers,
++  fuzz execution counts, interesting inputs, and package results.
++
++`test-results/` is ignored because generated logs and summaries include
++absolute local paths.
++
++## RPC endpoints
++
++| Protocol  | URL                          |
++|-----------|------------------------------|
++| HTTP JSON | `http://localhost:35997`     |
++| WebSocket | `ws://localhost:35998`       |
++| Pillar 1 HTTP JSON | `http://localhost:35991` |
++
++The PTLC live-RPC tests publish through the dedicated RPC node at
++`http://localhost:35997` by default. To compare directly against the
++producer RPC, override `PTLC_TESTNET_RPC=http://localhost:35991`.
++
++Quick smoke check:
++
++```sh
++curl -sX POST http://localhost:35997 \
++  -H 'Content-Type: application/json' \
++  -d '{"jsonrpc":"2.0","id":1,"method":"ledger.getFrontierMomentum","params":[]}'
++```
++
++The other three nodes only listen on the docker network. To poke them
++directly use `docker exec`:
++
++```sh
++docker exec znnd-devnet-pillar2 wget -qO- \
++  --post-data '{"jsonrpc":"2.0","id":1,"method":"ledger.getFrontierMomentum","params":[]}' \
++  --header 'Content-Type: application/json' \
++  http://localhost:35997
++```
++
++## Dev addresses
++
++All addresses are derived from a fixed BIP-39 mnemonic at path
++`m/44'/73404'/i'`. The mnemonic + password are committed to the repo —
++**devnet only, never reuse on mainnet**.
++
++```
++mnemonic: abstract affair idle position alien fluid board ordinary exist afraid chapter wood wood guide sun walnut crew perfect place firm poverty model side million
++password: devnet
++```
++
++| Index | Address                                          | Role                                  | Genesis balance              |
++|-------|--------------------------------------------------|---------------------------------------|------------------------------|
++| 0     | `z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq`       | Pillar 1 producer (lives in pillar)   | —                            |
++| 1     | `z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d`       | Pillar 1 owner / general dev wallet   | 10,000 ZNN, 100,000 QSR      |
++| 2     | `z1qzmzssx28dc0fmvlca05hyxk2kgkgu7n0cj8pl`       | Spork address                         | —                            |
++| 3     | `z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e`       | General dev account                   | 50,000 ZNN, 500,000 QSR      |
++| 4     | `z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un`       | Pillar 2 producer (lives in pillar2)  | —                            |
++| 5     | `z1qqleq9qc2u3039fly4ld5qgngdeapa3yks0e3l`       | Pillar 2 owner                        | —                            |
++| 6     | `z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e`       | Pillar 3 producer (lives in pillar3)  | —                            |
++| 7     | `z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes`       | Pillar 3 owner                        | —                            |
++
++The Accelerator contract (`z1qxemdeddedxaccelerat0rxxxxxxxxxxp4tk22`)
++is pre-funded with 1,000,000 ZNN + 10,000,000 QSR for proposal payouts.
++The Pillar contract (`z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg`) holds
++the 3 × 15,000 ZNN registration stakes (45,000 ZNN total).
++
++### Importing addresses into a wallet
++
++Producer keys (indices 0, 4, 6) live inside their respective pillar
++containers' encrypted keystores — you generally don't need them on the
++host. Pillar **owners** (indices 1, 5, 7) are the addresses that **vote**
++on Accelerator projects, sporks, and other governance actions; import
++those into syrius / znn-cli to drive proposals through.
++
++znn-cli example (against the dev rpc):
++
++```sh
++# import the dev mnemonic
++znn-cli wallet.createFromMnemonic "$MNEMONIC" devnet dev.json
++
++# vote from pillar 2's owner (index 5)
++znn-cli -u ws://localhost:35998 -k dev.json -p devnet --index 5 \
++  pillar.vote <pillar-name> <yes|no|abstain>
++```
++
++### Reaching a 2/3 quorum
++
++The Accelerator (and several other governance contracts) tally votes by
++**pillar count**, not delegation weight: each pillar is one vote.
++Strict majority + 33 % quorum means any **two** of `dev1`/`dev2`/`dev3`
++voting Yes is enough to pass a project or phase. To produce a passing
++vote on devnet, sign votes from indices 1 and 5 (or any other pair of
++owners).
++
++## Files in this directory
++
++```
++docker/devnet/
++├── entrypoint.sh                       # role-aware seeder, runs in every container
++├── genesis.json                        # ChainIdentifier 69, 3 pillars, dev allocations
++├── observer/                           # non-pillar relay peer
++│   ├── config.json
++│   └── network-private-key
++├── pillar/                             # pillar 1 (bootstrap)
++│   ├── config.json                     # producer + RPC + Net.MinPeers=0
++│   ├── network-private-key             # secp256k1 p2p key (committed)
++│   └── wallet/
++│       └── z1qq9n7...wyg0mq            # encrypted index-0 keystore
++├── pillar2/                            # pillar 2
++│   ├── config.json
++│   ├── network-private-key
++│   └── wallet/
++│       └── z1qz9zr5...rn2un            # encrypted index-4 keystore
++├── pillar3/                            # pillar 3
++│   ├── config.json
++│   ├── network-private-key
++│   └── wallet/
++│       └── z1qzedcj...a6g8e            # encrypted index-6 keystore
++└── rpc/
++    ├── config.json                     # no producer, public RPC ingress
++    └── network-private-key
++```
++
++All keystores are encrypted with the password `devnet`.
++
++## Regenerating
++
++`config.json` files and per-pillar keystores are produced by
++[`cmd/devnet-keygen`](../../cmd/devnet-keygen). Re-run after editing
++genesis, the keygen, or the static IPs:
++
++```sh
++make devnet-keys                # idempotent — leaves existing keys in place
++make devnet-keys FORCE=1        # also rotate every keystore + p2p key
++go run ./cmd/devnet-keygen --verify-genesis docker/devnet/genesis.json
++```
++
++`FORCE=1` will rotate every pillar's p2p key, which changes the enode
++URL baked into the seeders list of every other config file — that's
++fine because the keygen rewrites them all in the same run.
+diff --git a/docker/devnet/entrypoint.sh b/docker/devnet/entrypoint.sh
+new file mode 100755
+index 0000000..e2c2517
+--- /dev/null
++++ b/docker/devnet/entrypoint.sh
+@@ -0,0 +1,33 @@
++#!/bin/sh
++set -e
++
++ROLE="${ZNND_ROLE:-rpc}"
++SRC="/devnet/${ROLE}"
++DATA_DIR="/root/.znn"
++
++if [ ! -d "$SRC" ]; then
++    echo "unknown ZNND_ROLE='$ROLE' (expected a directory under /devnet)" >&2
++    exit 1
++fi
++
++mkdir -p "$DATA_DIR"
++
++if [ ! -f "$DATA_DIR/config.json" ]; then
++    echo "seeding $DATA_DIR for role=$ROLE"
++    cp "$SRC/config.json" "$DATA_DIR/config.json"
++    cp /devnet/genesis.json "$DATA_DIR/genesis.json"
++
++    if [ -d "$SRC/wallet" ]; then
++        mkdir -p "$DATA_DIR/wallet"
++        cp -r "$SRC/wallet/." "$DATA_DIR/wallet/"
++        chmod 700 "$DATA_DIR/wallet"
++        chmod 600 "$DATA_DIR/wallet/"*
++    fi
++
++    if [ -f "$SRC/network-private-key" ]; then
++        cp "$SRC/network-private-key" "$DATA_DIR/network-private-key"
++        chmod 600 "$DATA_DIR/network-private-key"
++    fi
++fi
++
++exec znnd "$@"
+diff --git a/docker/devnet/genesis.json b/docker/devnet/genesis.json
+new file mode 100644
+index 0000000..5154dce
+--- /dev/null
++++ b/docker/devnet/genesis.json
+@@ -0,0 +1,183 @@
++{
++    "ChainIdentifier": 69,
++    "ExtraData": "LOCAL DEV-NET",
++    "GenesisTimestampSec": 1739923200,
++    "SporkAddress": "z1qzmzssx28dc0fmvlca05hyxk2kgkgu7n0cj8pl",
++    "PillarConfig": {
++        "Pillars": [
++            {
++                "Name": "dev1",
++                "BlockProducingAddress": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++                "RewardWithdrawAddress": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d",
++                "StakeAddress": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d",
++                "Amount": 1500000000000,
++                "RegistrationTime": 0,
++                "RevokeTime": 0,
++                "GiveBlockRewardPercentage": 0,
++                "GiveDelegateRewardPercentage": 100,
++                "PillarType": 1
++            },
++            {
++                "Name": "dev2",
++                "BlockProducingAddress": "z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un",
++                "RewardWithdrawAddress": "z1qqleq9qc2u3039fly4ld5qgngdeapa3yks0e3l",
++                "StakeAddress": "z1qqleq9qc2u3039fly4ld5qgngdeapa3yks0e3l",
++                "Amount": 1500000000000,
++                "RegistrationTime": 0,
++                "RevokeTime": 0,
++                "GiveBlockRewardPercentage": 0,
++                "GiveDelegateRewardPercentage": 100,
++                "PillarType": 1
++            },
++            {
++                "Name": "dev3",
++                "BlockProducingAddress": "z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e",
++                "RewardWithdrawAddress": "z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes",
++                "StakeAddress": "z1qq8gll9ey70nym5cjxjqcegymw0g8a4je6kwes",
++                "Amount": 1500000000000,
++                "RegistrationTime": 0,
++                "RevokeTime": 0,
++                "GiveBlockRewardPercentage": 0,
++                "GiveDelegateRewardPercentage": 100,
++                "PillarType": 1
++            }
++        ],
++        "Delegations": [],
++        "LegacyEntries": []
++    },
++    "TokenConfig": {
++        "Tokens": [
++            {
++                "owner": "z1qxemdeddedxt0kenxxxxxxxxxxxxxxxxh9amk0",
++                "tokenName": "ZNN",
++                "tokenSymbol": "ZNN",
++                "tokenDomain": "zenon.devnet",
++                "totalSupply": 110500000000000,
++                "maxSupply": 9007199254740991,
++                "decimals": 8,
++                "isMintable": true,
++                "isBurnable": true,
++                "isUtility": true,
++                "tokenStandard": "zts1znnxxxxxxxxxxxxx9z4ulx"
++            },
++            {
++                "owner": "z1qxemdeddedxt0kenxxxxxxxxxxxxxxxxh9amk0",
++                "tokenName": "QSR",
++                "tokenSymbol": "QSR",
++                "tokenDomain": "zenon.devnet",
++                "totalSupply": 1060000000000000,
++                "maxSupply": 9007199254740991,
++                "decimals": 8,
++                "isMintable": true,
++                "isBurnable": true,
++                "isUtility": true,
++                "tokenStandard": "zts1qsrxxxxxxxxxxxxxmrhjll"
++            }
++        ]
++    },
++    "PlasmaConfig": {
++        "Fusions": [
++            {
++                "owner": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d",
++                "id": "85b559d52ef7e23b358cbceb12aeadcf5397bad860d8d50c4cd348246379e913",
++                "amount": 100000000000,
++                "withdrawHeight": 1,
++                "beneficiaryAddress": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d"
++            },
++            {
++                "owner": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d",
++                "id": "8d3a261582f0f7d01b0a7c6024da87e5637b5929cb71bc0f954cf14093e3059e",
++                "amount": 100000000000,
++                "withdrawHeight": 1,
++                "beneficiaryAddress": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d"
++            },
++            {
++                "owner": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d",
++                "id": "347ab55f43bf3e41cfedc07df54bdb30ead1704a1fbcef9e4205e8297e862126",
++                "amount": 100000000000,
++                "withdrawHeight": 1,
++                "beneficiaryAddress": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq"
++            },
++            {
++                "owner": "z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e",
++                "id": "2f7f6a9bbac9f2d9f5a0cb1240ffeed589b1c3d1d7362da319f45d7e97f00831",
++                "amount": 100000000000,
++                "withdrawHeight": 1,
++                "beneficiaryAddress": "z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e"
++            },
++            {
++                "owner": "z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e",
++                "id": "54fb6285882cf657d2a0436e2f13a631053f73ef24c7f9c5e4a4bb17ed2fdc8c",
++                "amount": 100000000000,
++                "withdrawHeight": 1,
++                "beneficiaryAddress": "z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e"
++            }
++        ]
++    },
++    "SwapConfig": {
++        "Entries": []
++    },
++    "SporkConfig": {
++        "Sporks": [
++            {
++                "id": "6d2b1e6cb4025f2f45533f0fe22e9b7ce2014d91cc960471045fa64eee5a6ba3",
++                "name": "az",
++                "description": "az",
++                "activated": true,
++                "enforcementHeight": 0
++            },
++            {
++                "id": "ceb7e3808ef17ea910adda2f3ab547be4cdfb54de8400ce3683258d06be1354b",
++                "name": "htlc",
++                "description": "htlc",
++                "activated": true,
++                "enforcementHeight": 0
++            },
++            {
++                "id": "ddd43466769461c5b5d109c639da0f50a7eeb96ad6e7274b1928a35c431d7b1b",
++                "name": "bridge-liq",
++                "description": "bridge-liq",
++                "activated": true,
++                "enforcementHeight": 0
++            },
++            {
++                "id": "e59f1e97f1096a18c2bc8421345b2633b11b839adb153e96dc65034c95f83f8d",
++                "name": "ptlc",
++                "description": "ptlc",
++                "activated": true,
++                "enforcementHeight": 0
++            }
++        ]
++    },
++    "GenesisBlocks": {
++        "Blocks": [
++            {
++                "Address": "z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg",
++                "BalanceList": {
++                    "zts1znnxxxxxxxxxxxxx9z4ulx": 4500000000000
++                }
++            },
++            {
++                "Address": "z1qxemdeddedxaccelerat0rxxxxxxxxxxp4tk22",
++                "BalanceList": {
++                    "zts1qsrxxxxxxxxxxxxxmrhjll": 1000000000000000,
++                    "zts1znnxxxxxxxxxxxxx9z4ulx": 100000000000000
++                }
++            },
++            {
++                "Address": "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d",
++                "BalanceList": {
++                    "zts1qsrxxxxxxxxxxxxxmrhjll": 10000000000000,
++                    "zts1znnxxxxxxxxxxxxx9z4ulx": 1000000000000
++                }
++            },
++            {
++                "Address": "z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e",
++                "BalanceList": {
++                    "zts1qsrxxxxxxxxxxxxxmrhjll": 50000000000000,
++                    "zts1znnxxxxxxxxxxxxx9z4ulx": 5000000000000
++                }
++            }
++        ]
++    }
++}
+diff --git a/docker/devnet/observer/config.json b/docker/devnet/observer/config.json
+new file mode 100644
+index 0000000..d1baaed
+--- /dev/null
++++ b/docker/devnet/observer/config.json
+@@ -0,0 +1,37 @@
++{
++    "DataPath": "/root/.znn",
++    "GenesisFile": "/root/.znn/genesis.json",
++    "LogLevel": "info",
++    "Name": "devnet-observer",
++    "Net": {
++        "ListenHost": "0.0.0.0",
++        "ListenPort": 35995,
++        "MinConnectedPeers": 2,
++        "MinPeers": 2,
++        "Seeders": [
++            "enode://91125cf1d9986023f41a5ba5b7d171956834873fdf2b3c825208522a7a581d3f56aa9c24d2008d606ec703ab6e23234d506152f9c4094d6732718e408cf76442@172.30.0.10:35995",
++            "enode://f2428f4541b2f26887e16eb3be5eeb8bfa7de10afa88faf0fa0f9c70ab1b0d55cf644def99baae4e41afedd63fbd0b832c65728c71ee3aad7d0bdba2d3ed680d@172.30.0.12:35995",
++            "enode://de61ad6bd5e852caa9a63ffcf320afae98fdd8b86612f0fb8b8eed6a5fe87526244f2dd087c29d3132755319120dd452fbfe51239b8d2e996ea7ca0285d23aa8@172.30.0.13:35995",
++            "enode://fa238035d186ce937cfca2585419d755b8136266adea99ad25efed764074e43bf5c62f1e9f859059bd96d4e762c1b96cd1934010af0d8ac59e8fb7a8284b2b58@172.30.0.11:35995"
++        ]
++    },
++    "RPC": {
++        "EnableHTTP": true,
++        "EnableWS": true,
++        "Endpoints": [],
++        "HTTPCors": [
++            "*"
++        ],
++        "HTTPHost": "0.0.0.0",
++        "HTTPPort": 35997,
++        "HTTPVirtualHosts": [
++            "*"
++        ],
++        "WSHost": "0.0.0.0",
++        "WSOrigins": [
++            "*"
++        ],
++        "WSPort": 35998
++    },
++    "WalletPath": "/root/.znn/wallet"
++}
+\ No newline at end of file
+diff --git a/docker/devnet/observer/network-private-key b/docker/devnet/observer/network-private-key
+new file mode 100644
+index 0000000..f6223b4
+--- /dev/null
++++ b/docker/devnet/observer/network-private-key
+@@ -0,0 +1 @@
++3b349db79504a309bd43cdc51e63cf1066360091a44247021719d4a0f287ee16
+\ No newline at end of file
+diff --git a/docker/devnet/pillar/config.json b/docker/devnet/pillar/config.json
+new file mode 100644
+index 0000000..ef4d20c
+--- /dev/null
++++ b/docker/devnet/pillar/config.json
+@@ -0,0 +1,38 @@
++{
++    "DataPath": "/root/.znn",
++    "GenesisFile": "/root/.znn/genesis.json",
++    "LogLevel": "info",
++    "Name": "devnet-pillar",
++    "Net": {
++        "ListenHost": "0.0.0.0",
++        "ListenPort": 35995,
++        "MinConnectedPeers": 0,
++        "MinPeers": 0,
++        "Seeders": []
++    },
++    "Producer": {
++        "Address": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++        "Index": 0,
++        "KeyFilePath": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++        "Password": "devnet"
++    },
++    "RPC": {
++        "EnableHTTP": true,
++        "EnableWS": true,
++        "Endpoints": [],
++        "HTTPCors": [
++            "*"
++        ],
++        "HTTPHost": "0.0.0.0",
++        "HTTPPort": 35997,
++        "HTTPVirtualHosts": [
++            "*"
++        ],
++        "WSHost": "0.0.0.0",
++        "WSOrigins": [
++            "*"
++        ],
++        "WSPort": 35998
++    },
++    "WalletPath": "/root/.znn/wallet"
++}
+\ No newline at end of file
+diff --git a/docker/devnet/pillar/network-private-key b/docker/devnet/pillar/network-private-key
+new file mode 100644
+index 0000000..32db490
+--- /dev/null
++++ b/docker/devnet/pillar/network-private-key
+@@ -0,0 +1 @@
++dc761a35a5b71eec2cc21ede8a8d151deea07e2c45276df3f29133180aba8609
+\ No newline at end of file
+diff --git a/docker/devnet/pillar/wallet/z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq b/docker/devnet/pillar/wallet/z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq
+new file mode 100755
+index 0000000..8d169a2
+--- /dev/null
++++ b/docker/devnet/pillar/wallet/z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq
+@@ -0,0 +1,15 @@
++{
++    "Path": "/root/.znn/wallet/z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++    "baseAddress": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++    "crypto": {
++        "cipherName": "aes-256-gcm",
++        "kdf": "argon2.IDKey",
++        "cipherData": "0x32b9a44e3b8059ca296afc9b3514379418cc2892f1c31d319ad1002fc65cd3b3c7eebbc7f0d36ca333be94a642bc2b27",
++        "nonce": "0xfd594d350cd59446fa7eba35",
++        "argon2Params": {
++            "salt": "0x3b10aad83f209c821de41dbf5c0638ac"
++        }
++    },
++    "version": 1,
++    "timestamp": 1777716397
++}
+\ No newline at end of file
+diff --git a/docker/devnet/pillar2/config.json b/docker/devnet/pillar2/config.json
+new file mode 100644
+index 0000000..990d201
+--- /dev/null
++++ b/docker/devnet/pillar2/config.json
+@@ -0,0 +1,41 @@
++{
++    "DataPath": "/root/.znn",
++    "GenesisFile": "/root/.znn/genesis.json",
++    "LogLevel": "info",
++    "Name": "devnet-pillar2",
++    "Net": {
++        "ListenHost": "0.0.0.0",
++        "ListenPort": 35995,
++        "MinConnectedPeers": 1,
++        "MinPeers": 1,
++        "Seeders": [
++            "enode://91125cf1d9986023f41a5ba5b7d171956834873fdf2b3c825208522a7a581d3f56aa9c24d2008d606ec703ab6e23234d506152f9c4094d6732718e408cf76442@172.30.0.10:35995",
++            "enode://de61ad6bd5e852caa9a63ffcf320afae98fdd8b86612f0fb8b8eed6a5fe87526244f2dd087c29d3132755319120dd452fbfe51239b8d2e996ea7ca0285d23aa8@172.30.0.13:35995"
++        ]
++    },
++    "Producer": {
++        "Address": "z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un",
++        "Index": 4,
++        "KeyFilePath": "z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un",
++        "Password": "devnet"
++    },
++    "RPC": {
++        "EnableHTTP": true,
++        "EnableWS": true,
++        "Endpoints": [],
++        "HTTPCors": [
++            "*"
++        ],
++        "HTTPHost": "0.0.0.0",
++        "HTTPPort": 35997,
++        "HTTPVirtualHosts": [
++            "*"
++        ],
++        "WSHost": "0.0.0.0",
++        "WSOrigins": [
++            "*"
++        ],
++        "WSPort": 35998
++    },
++    "WalletPath": "/root/.znn/wallet"
++}
+\ No newline at end of file
+diff --git a/docker/devnet/pillar2/network-private-key b/docker/devnet/pillar2/network-private-key
+new file mode 100644
+index 0000000..4823c0c
+--- /dev/null
++++ b/docker/devnet/pillar2/network-private-key
+@@ -0,0 +1 @@
++dd5d796893aeb23c33ab5354e28b1b1b08b0ef739161dbe519c85df8659dcf49
+\ No newline at end of file
+diff --git a/docker/devnet/pillar2/wallet/z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un b/docker/devnet/pillar2/wallet/z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un
+new file mode 100644
+index 0000000..0afcf3e
+--- /dev/null
++++ b/docker/devnet/pillar2/wallet/z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un
+@@ -0,0 +1,15 @@
++{
++    "Path": "/root/.znn/wallet/z1qz9zr5c7a0p8qljvrwt2cy5j99w98c5myrn2un",
++    "baseAddress": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++    "crypto": {
++        "cipherName": "aes-256-gcm",
++        "kdf": "argon2.IDKey",
++        "cipherData": "0x00d0bef1e3a8aeec7dc3273a831e7d4e2ae69466d0a4ab3729f93fda8607001fba5b5919e92267d529fd8144b06e81f4",
++        "nonce": "0xb90d85a130cf1e06808e5bd0",
++        "argon2Params": {
++            "salt": "0x1f25e662e3af853771a10399f31174a6"
++        }
++    },
++    "version": 1,
++    "timestamp": 1777716397
++}
+\ No newline at end of file
+diff --git a/docker/devnet/pillar3/config.json b/docker/devnet/pillar3/config.json
+new file mode 100644
+index 0000000..3e7dc23
+--- /dev/null
++++ b/docker/devnet/pillar3/config.json
+@@ -0,0 +1,41 @@
++{
++    "DataPath": "/root/.znn",
++    "GenesisFile": "/root/.znn/genesis.json",
++    "LogLevel": "info",
++    "Name": "devnet-pillar3",
++    "Net": {
++        "ListenHost": "0.0.0.0",
++        "ListenPort": 35995,
++        "MinConnectedPeers": 1,
++        "MinPeers": 1,
++        "Seeders": [
++            "enode://91125cf1d9986023f41a5ba5b7d171956834873fdf2b3c825208522a7a581d3f56aa9c24d2008d606ec703ab6e23234d506152f9c4094d6732718e408cf76442@172.30.0.10:35995",
++            "enode://f2428f4541b2f26887e16eb3be5eeb8bfa7de10afa88faf0fa0f9c70ab1b0d55cf644def99baae4e41afedd63fbd0b832c65728c71ee3aad7d0bdba2d3ed680d@172.30.0.12:35995"
++        ]
++    },
++    "Producer": {
++        "Address": "z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e",
++        "Index": 6,
++        "KeyFilePath": "z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e",
++        "Password": "devnet"
++    },
++    "RPC": {
++        "EnableHTTP": true,
++        "EnableWS": true,
++        "Endpoints": [],
++        "HTTPCors": [
++            "*"
++        ],
++        "HTTPHost": "0.0.0.0",
++        "HTTPPort": 35997,
++        "HTTPVirtualHosts": [
++            "*"
++        ],
++        "WSHost": "0.0.0.0",
++        "WSOrigins": [
++            "*"
++        ],
++        "WSPort": 35998
++    },
++    "WalletPath": "/root/.znn/wallet"
++}
+\ No newline at end of file
+diff --git a/docker/devnet/pillar3/network-private-key b/docker/devnet/pillar3/network-private-key
+new file mode 100644
+index 0000000..5188515
+--- /dev/null
++++ b/docker/devnet/pillar3/network-private-key
+@@ -0,0 +1 @@
++722879842848afc6c8493162badc8d5f3a2d231a220592719392a8faf4fe0611
+\ No newline at end of file
+diff --git a/docker/devnet/pillar3/wallet/z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e b/docker/devnet/pillar3/wallet/z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e
+new file mode 100644
+index 0000000..4de17d4
+--- /dev/null
++++ b/docker/devnet/pillar3/wallet/z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e
+@@ -0,0 +1,15 @@
++{
++    "Path": "/root/.znn/wallet/z1qzedcjmds6cwuqu7wkrvl0dadwwauzaana6g8e",
++    "baseAddress": "z1qq9n7fpaqd8lpcljandzmx4xtku9w4ftwyg0mq",
++    "crypto": {
++        "cipherName": "aes-256-gcm",
++        "kdf": "argon2.IDKey",
++        "cipherData": "0xa134b41603ad95094e298a1c57d477fe77c407c1be91e50488d65d3a17e1ae96a35a32f6fa7135318b5b718109863663",
++        "nonce": "0xb6e042251916ac57efacd429",
++        "argon2Params": {
++            "salt": "0x602d179f3d4f4daec4c478e982024c35"
++        }
++    },
++    "version": 1,
++    "timestamp": 1777716397
++}
+\ No newline at end of file
+diff --git a/docker/devnet/rpc/config.json b/docker/devnet/rpc/config.json
+new file mode 100644
+index 0000000..c108f44
+--- /dev/null
++++ b/docker/devnet/rpc/config.json
+@@ -0,0 +1,37 @@
++{
++    "DataPath": "/root/.znn",
++    "GenesisFile": "/root/.znn/genesis.json",
++    "LogLevel": "info",
++    "Name": "devnet-rpc",
++    "Net": {
++        "ListenHost": "0.0.0.0",
++        "ListenPort": 35995,
++        "MinConnectedPeers": 2,
++        "MinPeers": 2,
++        "Seeders": [
++            "enode://91125cf1d9986023f41a5ba5b7d171956834873fdf2b3c825208522a7a581d3f56aa9c24d2008d606ec703ab6e23234d506152f9c4094d6732718e408cf76442@172.30.0.10:35995",
++            "enode://f2428f4541b2f26887e16eb3be5eeb8bfa7de10afa88faf0fa0f9c70ab1b0d55cf644def99baae4e41afedd63fbd0b832c65728c71ee3aad7d0bdba2d3ed680d@172.30.0.12:35995",
++            "enode://de61ad6bd5e852caa9a63ffcf320afae98fdd8b86612f0fb8b8eed6a5fe87526244f2dd087c29d3132755319120dd452fbfe51239b8d2e996ea7ca0285d23aa8@172.30.0.13:35995",
++            "enode://2ac132862baaa3db330bc21181069c496c7f52fa4d87d38ba6968236b04f1ef5c3a9249cc2834a1f5c470bf66addef8fde9e844563a3b6a9c4cacbee2902b063@172.30.0.14:35995"
++        ]
++    },
++    "RPC": {
++        "EnableHTTP": true,
++        "EnableWS": true,
++        "Endpoints": [],
++        "HTTPCors": [
++            "*"
++        ],
++        "HTTPHost": "0.0.0.0",
++        "HTTPPort": 35997,
++        "HTTPVirtualHosts": [
++            "*"
++        ],
++        "WSHost": "0.0.0.0",
++        "WSOrigins": [
++            "*"
++        ],
++        "WSPort": 35998
++    },
++    "WalletPath": "/root/.znn/wallet"
++}
+\ No newline at end of file
+diff --git a/docker/devnet/rpc/network-private-key b/docker/devnet/rpc/network-private-key
+new file mode 100644
+index 0000000..909c067
+--- /dev/null
++++ b/docker/devnet/rpc/network-private-key
+@@ -0,0 +1 @@
++fa0c211e9fcbb624e0cdde91684e8fce8f3d3aa24cb4242c7c7ccdcbceb36800
+\ No newline at end of file
+diff --git a/docs/ptlc/README.md b/docs/ptlc/README.md
+index 11ef978..e74aa67 100644
+--- a/docs/ptlc/README.md
++++ b/docs/ptlc/README.md
+@@ -54,6 +54,28 @@ The PTLC contract is available only after `types.PtlcSpork` is enforced. The PTL
+ 
+ Operational rollout must activate sporks in chronological order. `PtlcSpork` assumes the prior HTLC and bridge/liquidity sporks have already been activated.
+ 
++## Testing
++
++The branch includes two PTLC-focused test workflows.
++
++Live RPC testnet suite:
++
++```sh
++make testnet-ptlc
++```
++
++This resets the dockerized local devnet, waits for the dedicated RPC node, runs `./testnet/ptlc`, writes a human-readable report to `test-results/ptlc/<timestamp>/summary.md`, and then tears the devnet down. The default endpoint is the dedicated RPC node at `http://localhost:35997`.
++
++Fuzz and adversarial suite:
++
++```sh
++make ptlc-fuzz
++```
++
++This runs the PTLC unit/adversarial tests and the live Go fuzz targets, then writes a report to `test-results/ptlc-fuzz/<timestamp>/summary.md`. The report lists each test, what it covers, each fuzz target, execution counts, interesting inputs, and raw log locations.
++
++The generated `test-results/` directory is intentionally ignored because logs and summaries include local absolute paths.
++
+ ## Related docs
+ 
+ - [Signing](SIGNING.md)
+diff --git a/testnet/ptlc/ptlc_test.go b/testnet/ptlc/ptlc_test.go
+new file mode 100644
+index 0000000..28f3258
+--- /dev/null
++++ b/testnet/ptlc/ptlc_test.go
+@@ -0,0 +1,643 @@
++//go:build testnet
++
++package ptlc_test
++
++import (
++	"context"
++	"fmt"
++	"math/big"
++	"os"
++	"testing"
++	"time"
++
++	"github.com/btcsuite/btcd/btcec/v2"
++	"github.com/btcsuite/btcd/btcec/v2/schnorr"
++	"github.com/tyler-smith/go-bip39"
++
++	"github.com/zenon-network/go-zenon/chain/nom"
++	"github.com/zenon-network/go-zenon/common"
++	znncrypto "github.com/zenon-network/go-zenon/common/crypto"
++	"github.com/zenon-network/go-zenon/common/types"
++	"github.com/zenon-network/go-zenon/rpc/api"
++	embeddedapi "github.com/zenon-network/go-zenon/rpc/api/embedded"
++	rpcclient "github.com/zenon-network/go-zenon/rpc/server"
++	"github.com/zenon-network/go-zenon/vm/embedded/definition"
++	"github.com/zenon-network/go-zenon/wallet"
++)
++
++const (
++	defaultRPCURL = "http://localhost:35997"
++	devMnemonic   = "abstract affair idle position alien fluid board ordinary exist afraid chapter wood wood guide sun walnut crew perfect place firm poverty model side million"
++
++	zexp = int64(100000000)
++
++	readyMomentumHeight = uint64(7)
++	minConfirmations    = uint64(1)
++
++	blockWaitTimeout           = 2 * time.Minute
++	contractReceiveWaitTimeout = 3 * time.Minute
++
++	expirationLeadSeconds = int64(240)
++
++	contractSuccess = uint64(1)
++	contractFail    = uint64(2)
++)
++
++type harness struct {
++	t      *testing.T
++	client *rpcclient.Client
++	keys   map[uint32]*wallet.KeyPair
++}
++
++func newHarness(t *testing.T) *harness {
++	t.Helper()
++
++	rpcURL := os.Getenv("PTLC_TESTNET_RPC")
++	if rpcURL == "" {
++		rpcURL = defaultRPCURL
++	}
++
++	var client *rpcclient.Client
++	deadline := time.Now().Add(90 * time.Second)
++	for {
++		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++		c, err := rpcclient.DialContext(ctx, rpcURL)
++		cancel()
++		if err == nil {
++			client = c
++			break
++		}
++		if time.Now().After(deadline) {
++			t.Fatalf("dial %s: %v", rpcURL, err)
++		}
++		time.Sleep(1 * time.Second)
++	}
++	t.Cleanup(client.Close)
++
++	h := &harness{
++		t:      t,
++		client: client,
++		keys:   deriveDevKeys(t),
++	}
++	h.waitForReady()
++	return h
++}
++
++func deriveDevKeys(t *testing.T) map[uint32]*wallet.KeyPair {
++	t.Helper()
++
++	seed := bip39.NewSeed(devMnemonic, "")
++	keys := make(map[uint32]*wallet.KeyPair)
++	for _, index := range []uint32{1, 3} {
++		key, err := wallet.DeriveWithIndex(index, seed)
++		if err != nil {
++			t.Fatalf("derive dev key %d: %v", index, err)
++		}
++		keys[index] = key
++	}
++
++	if got := keys[1].Address.String(); got != "z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d" {
++		t.Fatalf("unexpected index 1 address %s", got)
++	}
++	if got := keys[3].Address.String(); got != "z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e" {
++		t.Fatalf("unexpected index 3 address %s", got)
++	}
++
++	return keys
++}
++
++func (h *harness) call(result interface{}, method string, args ...interface{}) error {
++	h.t.Helper()
++
++	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
++	defer cancel()
++	return h.client.CallContext(ctx, result, method, args...)
++}
++
++func (h *harness) waitForReady() {
++	h.t.Helper()
++
++	h.eventually(5*time.Minute, func() (bool, string) {
++		momentum, err := h.frontierMomentum()
++		if err != nil {
++			return false, err.Error()
++		}
++		if momentum.ChainIdentifier != 69 {
++			h.t.Fatalf("expected devnet chain id 69, got %d", momentum.ChainIdentifier)
++		}
++		if momentum.Height < readyMomentumHeight {
++			return false, fmt.Sprintf("waiting for momentum height >= %d, got %d", readyMomentumHeight, momentum.Height)
++		}
++		return true, ""
++	})
++}
++
++func (h *harness) eventually(timeout time.Duration, fn func() (bool, string)) {
++	h.t.Helper()
++
++	deadline := time.Now().Add(timeout)
++	var last string
++	for {
++		ok, msg := fn()
++		if ok {
++			return
++		}
++		if msg != "" {
++			last = msg
++		}
++		if time.Now().After(deadline) {
++			h.t.Fatalf("timed out after %s: %s", timeout, last)
++		}
++		time.Sleep(1 * time.Second)
++	}
++}
++
++func (h *harness) frontierMomentum() (*nom.Momentum, error) {
++	var momentum nom.Momentum
++	if err := h.call(&momentum, "ledger.getFrontierMomentum"); err != nil {
++		return nil, err
++	}
++	return &momentum, nil
++}
++
++func (h *harness) accountInfo(address types.Address) *api.AccountInfo {
++	h.t.Helper()
++
++	var info api.AccountInfo
++	if err := h.call(&info, "ledger.getAccountInfoByAddress", address); err != nil {
++		h.t.Fatalf("get account info %s: %v", address, err)
++	}
++	return &info
++}
++
++func (h *harness) balance(address types.Address, token types.ZenonTokenStandard) *big.Int {
++	h.t.Helper()
++
++	info := h.accountInfo(address)
++	if balance, ok := info.BalanceInfoMap[token]; ok && balance != nil && balance.Balance != nil {
++		return new(big.Int).Set(balance.Balance)
++	}
++	return big.NewInt(0)
++}
++
++func (h *harness) frontierAccount(address types.Address) *api.AccountBlock {
++	h.t.Helper()
++
++	var block *api.AccountBlock
++	if err := h.call(&block, "ledger.getFrontierAccountBlock", address); err != nil {
++		h.t.Fatalf("get frontier account block %s: %v", address, err)
++	}
++	return block
++}
++
++func (h *harness) requiredPlasma(address types.Address, blockType uint64, to *types.Address, data []byte) uint64 {
++	h.t.Helper()
++
++	var result embeddedapi.GetRequiredResult
++	err := h.call(&result, "embedded.plasma.getRequiredPoWForAccountBlock", embeddedapi.GetRequiredParam{
++		SelfAddr:  address,
++		BlockType: blockType,
++		ToAddr:    to,
++		Data:      data,
++	})
++	if err != nil {
++		h.t.Fatalf("get required plasma: %v", err)
++	}
++	if result.RequiredDifficulty != 0 {
++		h.t.Fatalf("dev account %s needs PoW difficulty %d; add more fused plasma to devnet genesis", address, result.RequiredDifficulty)
++	}
++	return result.BasePlasma
++}
++
++func (h *harness) publishSend(key *wallet.KeyPair, to types.Address, amount *big.Int, token types.ZenonTokenStandard, data []byte) (types.Hash, error) {
++	h.t.Helper()
++
++	block := h.newAccountBlock(key.Address, nom.BlockTypeUserSend)
++	block.ToAddress = to
++	block.Amount = new(big.Int).Set(amount)
++	block.TokenStandard = token
++	block.Data = append([]byte(nil), data...)
++	block.FusedPlasma = h.requiredPlasma(key.Address, nom.BlockTypeUserSend, &to, data)
++	h.sign(block, key)
++
++	err := h.call(nil, "ledger.publishRawTransaction", &api.AccountBlock{AccountBlock: *block})
++	return block.Hash, err
++}
++
++func (h *harness) mustPublishSend(key *wallet.KeyPair, to types.Address, amount *big.Int, token types.ZenonTokenStandard, data []byte) types.Hash {
++	h.t.Helper()
++
++	hash, err := h.publishSend(key, to, amount, token, data)
++	if err != nil {
++		h.t.Fatalf("publish send %s -> %s: %v", key.Address, to, err)
++	}
++	return hash
++}
++
++func (h *harness) publishReceive(key *wallet.KeyPair, from types.Hash) (types.Hash, error) {
++	h.t.Helper()
++
++	block := h.newAccountBlock(key.Address, nom.BlockTypeUserReceive)
++	block.FromBlockHash = from
++	block.FusedPlasma = h.requiredPlasma(key.Address, nom.BlockTypeUserReceive, nil, nil)
++	h.sign(block, key)
++
++	err := h.call(nil, "ledger.publishRawTransaction", &api.AccountBlock{AccountBlock: *block})
++	return block.Hash, err
++}
++
++func (h *harness) mustPublishReceive(key *wallet.KeyPair, from types.Hash) types.Hash {
++	h.t.Helper()
++
++	hash, err := h.publishReceive(key, from)
++	if err != nil {
++		h.t.Fatalf("publish receive %s from %s: %v", key.Address, from, err)
++	}
++	return hash
++}
++
++func (h *harness) newAccountBlock(address types.Address, blockType uint64) *nom.AccountBlock {
++	h.t.Helper()
++
++	momentum, err := h.frontierMomentum()
++	if err != nil {
++		h.t.Fatalf("get frontier momentum: %v", err)
++	}
++
++	block := &nom.AccountBlock{
++		Version:              1,
++		ChainIdentifier:      momentum.ChainIdentifier,
++		BlockType:            blockType,
++		MomentumAcknowledged: momentum.Identifier(),
++		Address:              address,
++		Amount:               big.NewInt(0),
++		TokenStandard:        types.ZeroTokenStandard,
++		DescendantBlocks:     make([]*nom.AccountBlock, 0),
++	}
++
++	if frontier := h.frontierAccount(address); frontier != nil {
++		block.PreviousHash = frontier.Hash
++		block.Height = frontier.Height + 1
++	} else {
++		block.Height = 1
++	}
++
++	return block
++}
++
++func (h *harness) sign(block *nom.AccountBlock, key *wallet.KeyPair) {
++	h.t.Helper()
++
++	block.Hash = block.ComputeHash()
++	block.PublicKey = key.Public
++	block.Signature = key.Sign(block.Hash.Bytes())
++}
++
++func (h *harness) waitBlock(hash types.Hash) *api.AccountBlock {
++	h.t.Helper()
++
++	var block *api.AccountBlock
++	h.eventually(blockWaitTimeout, func() (bool, string) {
++		err := h.call(&block, "ledger.getAccountBlockByHash", hash)
++		if err != nil {
++			return false, err.Error()
++		}
++		if block == nil {
++			return false, fmt.Sprintf("block %s not cemented yet", hash)
++		}
++		if block.ConfirmationDetail == nil || block.ConfirmationDetail.NumConfirmations < minConfirmations {
++			return false, fmt.Sprintf("block %s has fewer than %d confirmations", hash, minConfirmations)
++		}
++		return true, ""
++	})
++	return block
++}
++
++func (h *harness) waitContractStatus(sendHash types.Hash) uint64 {
++	h.t.Helper()
++
++	var sendBlock *api.AccountBlock
++	h.eventually(contractReceiveWaitTimeout, func() (bool, string) {
++		sendBlock = h.waitBlock(sendHash)
++		if sendBlock.PairedAccountBlock == nil {
++			return false, fmt.Sprintf("contract receive for %s not generated yet", sendHash)
++		}
++		return true, ""
++	})
++
++	paired := sendBlock.PairedAccountBlock
++	if paired.BlockType != nom.BlockTypeContractReceive {
++		h.t.Fatalf("paired block for %s has block type %d, want contract receive", sendHash, paired.BlockType)
++	}
++	if len(paired.Data) != 8 {
++		h.t.Fatalf("contract receive %s has status data length %d", paired.Hash, len(paired.Data))
++	}
++	return common.BytesToUint64(paired.Data)
++}
++
++func (h *harness) waitPtlc(id types.Hash) *definition.PtlcInfo {
++	h.t.Helper()
++
++	var info *definition.PtlcInfo
++	h.eventually(60*time.Second, func() (bool, string) {
++		err := h.call(&info, "embedded.ptlc.getById", id)
++		if err != nil {
++			return false, err.Error()
++		}
++		if info == nil {
++			return false, "PTLC info is nil"
++		}
++		return true, ""
++	})
++	return info
++}
++
++func (h *harness) waitPtlcDeleted(id types.Hash) {
++	h.t.Helper()
++
++	h.eventually(60*time.Second, func() (bool, string) {
++		var info *definition.PtlcInfo
++		err := h.call(&info, "embedded.ptlc.getById", id)
++		if err != nil {
++			return true, ""
++		}
++		return false, fmt.Sprintf("PTLC %s still exists", id)
++	})
++}
++
++func (h *harness) receiveAll(key *wallet.KeyPair) {
++	h.t.Helper()
++
++	for {
++		var list api.AccountBlockList
++		if err := h.call(&list, "ledger.getUnreceivedBlocksByAddress", key.Address, uint32(0), uint32(10)); err != nil {
++			h.t.Fatalf("get unreceived blocks for %s: %v", key.Address, err)
++		}
++		if len(list.List) == 0 {
++			return
++		}
++		for _, send := range list.List {
++			receiveHash := h.mustPublishReceive(key, send.Hash)
++			h.waitBlock(receiveHash)
++		}
++	}
++}
++
++func (h *harness) currentTimestamp() int64 {
++	h.t.Helper()
++
++	momentum, err := h.frontierMomentum()
++	if err != nil {
++		h.t.Fatalf("get frontier momentum: %v", err)
++	}
++	return int64(momentum.TimestampUnix)
++}
++
++func (h *harness) waitTimestampAtLeast(target int64) {
++	h.t.Helper()
++
++	h.eventually(5*time.Minute, func() (bool, string) {
++		now := h.currentTimestamp()
++		if now >= target {
++			return true, ""
++		}
++		return false, fmt.Sprintf("frontier timestamp %d < %d", now, target)
++	})
++}
++
++func oneZNN(multiplier int64) *big.Int {
++	return big.NewInt(multiplier * zexp)
++}
++
++func TestPtlcCreateValidationViaRPC(t *testing.T) {
++	h := newHarness(t)
++	locker := h.keys[1]
++	recipient := h.keys[3]
++
++	expiration := h.currentTimestamp() + 300
++	validCreate := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		expiration,
++		definition.PointTypeED25519,
++		recipient.Public,
++	)
++
++	if _, err := h.publishSend(locker, types.PtlcContract, big.NewInt(0), types.ZnnTokenStandard, validCreate); err == nil {
++		t.Fatalf("zero-amount create unexpectedly succeeded")
++	}
++
++	badPointType := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		expiration,
++		uint8(99),
++		recipient.Public,
++	)
++	if _, err := h.publishSend(locker, types.PtlcContract, oneZNN(1), types.ZnnTokenStandard, badPointType); err == nil {
++		t.Fatalf("bad point type create unexpectedly succeeded")
++	}
++
++	badPointLock := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		expiration,
++		definition.PointTypeED25519,
++		recipient.Public[:31],
++	)
++	if _, err := h.publishSend(locker, types.PtlcContract, oneZNN(1), types.ZnnTokenStandard, badPointLock); err == nil {
++		t.Fatalf("bad point lock create unexpectedly succeeded")
++	}
++
++	expiredCreate := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		h.currentTimestamp()-1,
++		definition.PointTypeED25519,
++		recipient.Public,
++	)
++	expiredHash := h.mustPublishSend(locker, types.PtlcContract, oneZNN(1), types.ZnnTokenStandard, expiredCreate)
++	if status := h.waitContractStatus(expiredHash); status != contractFail {
++		t.Fatalf("expired create status = %d, want fail", status)
++	}
++}
++
++func TestPtlcED25519DomainSeparatedUnlockViaRPC(t *testing.T) {
++	h := newHarness(t)
++	locker := h.keys[1]
++	recipient := h.keys[3]
++	h.receiveAll(locker)
++	h.receiveAll(recipient)
++
++	amount := oneZNN(2)
++	initialRecipient := h.balance(recipient.Address, types.ZnnTokenStandard)
++	createData := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		h.currentTimestamp()+600,
++		definition.PointTypeED25519,
++		recipient.Public,
++	)
++	ptlcID := h.mustPublishSend(locker, types.PtlcContract, amount, types.ZnnTokenStandard, createData)
++	if status := h.waitContractStatus(ptlcID); status != contractSuccess {
++		t.Fatalf("create status = %d, want success", status)
++	}
++	info := h.waitPtlc(ptlcID)
++	if info.TimeLocked != locker.Address || info.TokenStandard != types.ZnnTokenStandard || info.Amount.Cmp(amount) != 0 {
++		t.Fatalf("unexpected PTLC info: %+v", info)
++	}
++
++	oldMessage := cryptoHashForLegacyUnlock(ptlcID, recipient.Address)
++	oldSignature := recipient.Sign(oldMessage)
++	oldUnlock := definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, ptlcID, oldSignature)
++	oldUnlockHash := h.mustPublishSend(recipient, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, oldUnlock)
++	if status := h.waitContractStatus(oldUnlockHash); status != contractFail {
++		t.Fatalf("legacy unlock status = %d, want fail", status)
++	}
++	h.waitPtlc(ptlcID)
++
++	momentum, err := h.frontierMomentum()
++	if err != nil {
++		t.Fatalf("frontier momentum: %v", err)
++	}
++	message := definition.GetPtlcUnlockMessage(momentum.ChainIdentifier, definition.PointTypeED25519, ptlcID, recipient.Address)
++	signature := recipient.Sign(message)
++	unlockData := definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, ptlcID, signature)
++	unlockHash := h.mustPublishSend(recipient, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, unlockData)
++	if status := h.waitContractStatus(unlockHash); status != contractSuccess {
++		t.Fatalf("unlock status = %d, want success", status)
++	}
++	h.waitPtlcDeleted(ptlcID)
++	h.receiveAll(recipient)
++
++	finalRecipient := h.balance(recipient.Address, types.ZnnTokenStandard)
++	if finalRecipient.Cmp(new(big.Int).Add(initialRecipient, amount)) != 0 {
++		t.Fatalf("recipient balance = %s, want %s", finalRecipient, new(big.Int).Add(initialRecipient, amount))
++	}
++}
++
++func TestPtlcBIP340ProxyDestinationBindingViaRPC(t *testing.T) {
++	h := newHarness(t)
++	locker := h.keys[1]
++	recipient := h.keys[3]
++	h.receiveAll(locker)
++	h.receiveAll(recipient)
++
++	privateKey, publicKey := btcec.PrivKeyFromBytes([]byte{
++		0x12, 0x2d, 0x43, 0x9a, 0x88, 0x7c, 0xef, 0x5a,
++		0x91, 0x75, 0x68, 0x94, 0x9d, 0xf4, 0x28, 0x51,
++		0xc4, 0x32, 0xb3, 0x8d, 0xef, 0x72, 0x02, 0xb1,
++		0xf8, 0x52, 0x54, 0x31, 0x22, 0x45, 0x99, 0x01,
++	})
++	pointLock := schnorr.SerializePubKey(publicKey)
++
++	amount := oneZNN(3)
++	initialRecipient := h.balance(recipient.Address, types.ZnnTokenStandard)
++	createData := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		h.currentTimestamp()+600,
++		definition.PointTypeBIP340,
++		pointLock,
++	)
++	ptlcID := h.mustPublishSend(locker, types.PtlcContract, amount, types.ZnnTokenStandard, createData)
++	if status := h.waitContractStatus(ptlcID); status != contractSuccess {
++		t.Fatalf("create status = %d, want success", status)
++	}
++	h.waitPtlc(ptlcID)
++
++	momentum, err := h.frontierMomentum()
++	if err != nil {
++		t.Fatalf("frontier momentum: %v", err)
++	}
++	message := definition.GetPtlcUnlockMessage(momentum.ChainIdentifier, definition.PointTypeBIP340, ptlcID, recipient.Address)
++	signature, err := schnorr.Sign(privateKey, message)
++	if err != nil {
++		t.Fatalf("sign BIP340 unlock: %v", err)
++	}
++
++	wrongDestinationData := definition.ABIPtlc.PackMethodPanic(
++		definition.ProxyUnlockPtlcMethodName,
++		ptlcID,
++		locker.Address,
++		signature.Serialize(),
++	)
++	wrongDestinationHash := h.mustPublishSend(locker, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, wrongDestinationData)
++	if status := h.waitContractStatus(wrongDestinationHash); status != contractFail {
++		t.Fatalf("wrong-destination proxy unlock status = %d, want fail", status)
++	}
++	h.waitPtlc(ptlcID)
++
++	proxyData := definition.ABIPtlc.PackMethodPanic(
++		definition.ProxyUnlockPtlcMethodName,
++		ptlcID,
++		recipient.Address,
++		signature.Serialize(),
++	)
++	proxyHash := h.mustPublishSend(locker, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, proxyData)
++	if status := h.waitContractStatus(proxyHash); status != contractSuccess {
++		t.Fatalf("proxy unlock status = %d, want success", status)
++	}
++	h.waitPtlcDeleted(ptlcID)
++	h.receiveAll(recipient)
++
++	finalRecipient := h.balance(recipient.Address, types.ZnnTokenStandard)
++	if finalRecipient.Cmp(new(big.Int).Add(initialRecipient, amount)) != 0 {
++		t.Fatalf("recipient balance = %s, want %s", finalRecipient, new(big.Int).Add(initialRecipient, amount))
++	}
++}
++
++func TestPtlcExpirationAndReclaimViaRPC(t *testing.T) {
++	h := newHarness(t)
++	locker := h.keys[1]
++	recipient := h.keys[3]
++	h.receiveAll(locker)
++	h.receiveAll(recipient)
++
++	amount := oneZNN(1)
++	initialLocker := h.balance(locker.Address, types.ZnnTokenStandard)
++	expiration := h.currentTimestamp() + expirationLeadSeconds
++	createData := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		expiration,
++		definition.PointTypeED25519,
++		recipient.Public,
++	)
++	ptlcID := h.mustPublishSend(locker, types.PtlcContract, amount, types.ZnnTokenStandard, createData)
++	if status := h.waitContractStatus(ptlcID); status != contractSuccess {
++		t.Fatalf("create status = %d, want success", status)
++	}
++	h.waitPtlc(ptlcID)
++
++	earlyReclaim := definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, ptlcID)
++	earlyReclaimHash := h.mustPublishSend(locker, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, earlyReclaim)
++	if status := h.waitContractStatus(earlyReclaimHash); status != contractFail {
++		t.Fatalf("early reclaim status = %d, want fail", status)
++	}
++	h.waitPtlc(ptlcID)
++
++	h.waitTimestampAtLeast(expiration)
++
++	momentum, err := h.frontierMomentum()
++	if err != nil {
++		t.Fatalf("frontier momentum: %v", err)
++	}
++	message := definition.GetPtlcUnlockMessage(momentum.ChainIdentifier, definition.PointTypeED25519, ptlcID, recipient.Address)
++	expiredUnlock := definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, ptlcID, recipient.Sign(message))
++	expiredUnlockHash := h.mustPublishSend(recipient, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, expiredUnlock)
++	if status := h.waitContractStatus(expiredUnlockHash); status != contractFail {
++		t.Fatalf("expired unlock status = %d, want fail", status)
++	}
++	h.waitPtlc(ptlcID)
++
++	reclaim := definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, ptlcID)
++	reclaimHash := h.mustPublishSend(locker, types.PtlcContract, big.NewInt(0), types.ZeroTokenStandard, reclaim)
++	if status := h.waitContractStatus(reclaimHash); status != contractSuccess {
++		t.Fatalf("reclaim status = %d, want success", status)
++	}
++	h.waitPtlcDeleted(ptlcID)
++	h.receiveAll(locker)
++
++	finalLocker := h.balance(locker.Address, types.ZnnTokenStandard)
++	if finalLocker.Cmp(initialLocker) != 0 {
++		t.Fatalf("locker balance = %s, want %s", finalLocker, initialLocker)
++	}
++}
++
++func cryptoHashForLegacyUnlock(id types.Hash, destination types.Address) []byte {
++	return znncrypto.Hash(common.JoinBytes(id.Bytes(), destination.Bytes()))
++}
+diff --git a/testnet/ptlc/rpc_relay_diagnostic_test.go b/testnet/ptlc/rpc_relay_diagnostic_test.go
+new file mode 100644
+index 0000000..17c2930
+--- /dev/null
++++ b/testnet/ptlc/rpc_relay_diagnostic_test.go
+@@ -0,0 +1,246 @@
++//go:build testnet
++
++package ptlc_test
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/zenon-network/go-zenon/chain/nom"
++	"github.com/zenon-network/go-zenon/common"
++	"github.com/zenon-network/go-zenon/common/types"
++	"github.com/zenon-network/go-zenon/protocol"
++	"github.com/zenon-network/go-zenon/rpc/api"
++	rpcclient "github.com/zenon-network/go-zenon/rpc/server"
++	"github.com/zenon-network/go-zenon/vm/embedded/definition"
++)
++
++const (
++	defaultWriteRPCURL  = "http://localhost:35997"
++	defaultPillarRPCURL = "http://localhost:35991"
++)
++
++type relayObservation struct {
++	seenBlock       bool
++	seenBlockAfter  time.Duration
++	seenPaired      bool
++	seenPairedAfter time.Duration
++	confirmations   uint64
++	contractStatus  string
++	frontierHeight  uint64
++	last            string
++}
++
++func TestRpcRelayDiagnosticViaRPC(t *testing.T) {
++	if os.Getenv("PTLC_TESTNET_RPC_DIAGNOSTIC") != "1" {
++		t.Skip("set PTLC_TESTNET_RPC_DIAGNOSTIC=1 to run the RPC relay diagnostic")
++	}
++
++	writeURL := envOr("PTLC_TESTNET_WRITE_RPC", defaultWriteRPCURL)
++	pillarURL := envOr("PTLC_TESTNET_PILLAR_RPC", defaultPillarRPCURL)
++
++	writer := newHarnessForURL(t, writeURL)
++	pillar := newHarnessForURL(t, pillarURL)
++
++	logEndpointHealth(t, "write-rpc", writer)
++	logEndpointHealth(t, "pillar", pillar)
++
++	locker := writer.keys[1]
++	recipient := writer.keys[3]
++	createData := definition.ABIPtlc.PackMethodPanic(
++		definition.CreatePtlcMethodName,
++		writer.currentTimestamp()+600,
++		definition.PointTypeED25519,
++		recipient.Public,
++	)
++
++	hash := writer.mustPublishSend(locker, types.PtlcContract, oneZNN(1), types.ZnnTokenStandard, createData)
++	t.Logf("published PTLC create through %s: %s", writeURL, hash)
++
++	observations := observeRelay(t, hash, map[string]*harness{
++		"write-rpc": writer,
++		"pillar":    pillar,
++	}, 2*time.Minute)
++
++	for name, observation := range observations {
++		t.Logf("%s observation: %s", name, observation)
++	}
++
++	pillarObservation := observations["pillar"]
++	writeObservation := observations["write-rpc"]
++	if !pillarObservation.seenBlock {
++		t.Fatalf("RPC-published block did not reach pillar within diagnostic window")
++	}
++	if !pillarObservation.seenPaired {
++		t.Fatalf("RPC-published block reached pillar but pillar did not see contract receive")
++	}
++	if !writeObservation.seenBlock {
++		t.Fatalf("RPC-published block reached pillar but was not visible from write RPC")
++	}
++	if !writeObservation.seenPaired {
++		t.Fatalf("RPC-published block was visible from write RPC but contract receive was not visible there")
++	}
++}
++
++func newHarnessForURL(t *testing.T, rpcURL string) *harness {
++	t.Helper()
++
++	var client *rpcclient.Client
++	deadline := time.Now().Add(90 * time.Second)
++	for {
++		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++		c, err := rpcclient.DialContext(ctx, rpcURL)
++		cancel()
++		if err == nil {
++			client = c
++			break
++		}
++		if time.Now().After(deadline) {
++			t.Fatalf("dial %s: %v", rpcURL, err)
++		}
++		time.Sleep(1 * time.Second)
++	}
++	t.Cleanup(client.Close)
++
++	h := &harness{
++		t:      t,
++		client: client,
++		keys:   deriveDevKeys(t),
++	}
++	h.waitForReady()
++	return h
++}
++
++func logEndpointHealth(t *testing.T, name string, h *harness) {
++	t.Helper()
++
++	momentum, err := h.frontierMomentum()
++	if err != nil {
++		t.Logf("%s frontier error: %v", name, err)
++	} else {
++		t.Logf("%s frontier: height=%d hash=%s timestamp=%d", name, momentum.Height, momentum.Hash, momentum.TimestampUnix)
++	}
++
++	var network api.NetworkInfoResponse
++	if err := h.call(&network, "stats.networkInfo"); err != nil {
++		t.Logf("%s networkInfo error: %v", name, err)
++	} else {
++		peers := make([]string, 0, len(network.Peers))
++		for _, peer := range network.Peers {
++			peers = append(peers, fmt.Sprintf("%s@%s", peer.Name, peer.IP))
++		}
++		t.Logf("%s networkInfo: peers=%d [%s]", name, network.NumPeers, strings.Join(peers, ", "))
++	}
++
++	var syncInfo protocol.SyncInfo
++	if err := h.call(&syncInfo, "stats.syncInfo"); err != nil {
++		t.Logf("%s syncInfo error: %v", name, err)
++	} else {
++		t.Logf("%s syncInfo: state=%d current=%d target=%d", name, syncInfo.State, syncInfo.CurrentHeight, syncInfo.TargetHeight)
++	}
++}
++
++func observeRelay(t *testing.T, hash types.Hash, endpoints map[string]*harness, timeout time.Duration) map[string]*relayObservation {
++	t.Helper()
++
++	start := time.Now()
++	deadline := start.Add(timeout)
++	observations := make(map[string]*relayObservation, len(endpoints))
++	for name := range endpoints {
++		observations[name] = &relayObservation{}
++	}
++
++	for {
++		allPaired := true
++		for name, h := range endpoints {
++			observation := observations[name]
++			if momentum, err := h.frontierMomentum(); err == nil {
++				observation.frontierHeight = momentum.Height
++			}
++
++			var block *api.AccountBlock
++			err := h.call(&block, "ledger.getAccountBlockByHash", hash)
++			if err != nil {
++				observation.last = err.Error()
++				allPaired = false
++				continue
++			}
++			if block == nil {
++				observation.last = "block not visible"
++				allPaired = false
++				continue
++			}
++
++			elapsed := time.Since(start).Round(time.Second)
++			if !observation.seenBlock {
++				observation.seenBlock = true
++				observation.seenBlockAfter = elapsed
++			}
++			if block.ConfirmationDetail != nil {
++				observation.confirmations = block.ConfirmationDetail.NumConfirmations
++			}
++			if block.PairedAccountBlock == nil {
++				observation.last = "block visible without paired contract receive"
++				allPaired = false
++				continue
++			}
++
++			if !observation.seenPaired {
++				observation.seenPaired = true
++				observation.seenPairedAfter = elapsed
++			}
++			observation.last = "paired contract receive visible"
++			observation.contractStatus = contractStatusString(block.PairedAccountBlock)
++		}
++
++		if allPaired {
++			return observations
++		}
++		if time.Now().After(deadline) {
++			return observations
++		}
++		time.Sleep(1 * time.Second)
++	}
++}
++
++func contractStatusString(block *api.AccountBlock) string {
++	if block.BlockType != nom.BlockTypeContractReceive {
++		return fmt.Sprintf("unexpected block type %d", block.BlockType)
++	}
++	if len(block.Data) != 8 {
++		return fmt.Sprintf("unexpected status data length %d", len(block.Data))
++	}
++	status := common.BytesToUint64(block.Data)
++	if status == contractSuccess {
++		return "success"
++	}
++	if status == contractFail {
++		return "fail"
++	}
++	return fmt.Sprintf("unknown status %d", status)
++}
++
++func (o relayObservation) String() string {
++	return fmt.Sprintf(
++		"seenBlock=%t after=%s seenPaired=%t pairedAfter=%s confirmations=%d contractStatus=%s frontierHeight=%d last=%q",
++		o.seenBlock,
++		o.seenBlockAfter,
++		o.seenPaired,
++		o.seenPairedAfter,
++		o.confirmations,
++		o.contractStatus,
++		o.frontierHeight,
++		o.last,
++	)
++}
++
++func envOr(name, fallback string) string {
++	if value := os.Getenv(name); value != "" {
++		return value
++	}
++	return fallback
++}
+diff --git a/testnet/ptlc/run-fuzz-suite.sh b/testnet/ptlc/run-fuzz-suite.sh
+new file mode 100755
+index 0000000..951f486
+--- /dev/null
++++ b/testnet/ptlc/run-fuzz-suite.sh
+@@ -0,0 +1,180 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++RESULTS_DIR="${PTLC_FUZZ_RESULTS_DIR:-$ROOT_DIR/test-results/ptlc-fuzz}"
++TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
++RUN_DIR="$RESULTS_DIR/$TIMESTAMP"
++UNIT_LOG="$RUN_DIR/unit-adversarial.log"
++SUMMARY_FILE="$RUN_DIR/summary.md"
++STATUS_FILE="$RUN_DIR/fuzz-status.tsv"
++
++GOCACHE_DIR="${GOCACHE:-$ROOT_DIR/.gocache}"
++UNIT_TIMEOUT="${PTLC_FUZZ_UNIT_TIMEOUT:-120s}"
++FUZZ_TIME="${PTLC_FUZZ_TIME:-5s}"
++FUZZ_TIMEOUT="${PTLC_FUZZ_TIMEOUT:-45s}"
++
++FUZZ_TARGETS=(
++	"FuzzPtlcValidateSendBlockNoPanic"
++	"FuzzPtlcStoredInfoValidation"
++	"FuzzPtlcED25519DomainMutationRejected"
++	"FuzzPtlcBIP340DomainMutationRejected"
++)
++
++mkdir -p "$RUN_DIR" "$GOCACHE_DIR"
++: > "$STATUS_FILE"
++
++echo "PTLC fuzz/adversarial suite"
++echo "  results:      $RUN_DIR"
++echo "  unit timeout: $UNIT_TIMEOUT"
++echo "  fuzz time:    $FUZZ_TIME"
++echo
++
++set +e
++(
++	cd "$ROOT_DIR"
++	GOCACHE="$GOCACHE_DIR" \
++		go test ./vm/embedded/definition ./vm/embedded/implementation ./vm/embedded/tests \
++			-run 'TestPtlc_|FuzzPtlc' \
++			-timeout "$UNIT_TIMEOUT" \
++			-count=1 \
++			-v
++) 2>&1 | tee "$UNIT_LOG"
++UNIT_STATUS="${PIPESTATUS[0]}"
++set -e
++
++for target in "${FUZZ_TARGETS[@]}"; do
++	log_file="$RUN_DIR/fuzz-$target.log"
++	echo
++	echo "Running $target for $FUZZ_TIME"
++
++	set +e
++	(
++		cd "$ROOT_DIR"
++		GOCACHE="$GOCACHE_DIR" \
++			go test ./vm/embedded/implementation \
++				-run '^$' \
++				-fuzz "$target" \
++				-fuzztime="$FUZZ_TIME" \
++				-timeout "$FUZZ_TIMEOUT"
++	) 2>&1 | tee "$log_file"
++	fuzz_status="${PIPESTATUS[0]}"
++	set -e
++
++	if [ "$fuzz_status" -eq 0 ]; then
++		result="PASS"
++	else
++		result="FAIL"
++	fi
++	printf '%s\t%s\t%s\n' "$target" "$result" "$log_file" >> "$STATUS_FILE"
++done
++
++SUITE_STATUS="PASS"
++if [ "$UNIT_STATUS" -ne 0 ]; then
++	SUITE_STATUS="FAIL"
++fi
++while IFS=$'\t' read -r _target result _log_file; do
++	if [ "$result" != "PASS" ]; then
++		SUITE_STATUS="FAIL"
++	fi
++done < "$STATUS_FILE"
++
++{
++	echo "# PTLC Fuzz and Adversarial Suite"
++	echo
++	echo "| Field | Value |"
++	echo "|---|---|"
++	echo "| Status | $SUITE_STATUS |"
++	echo "| Date UTC | $TIMESTAMP |"
++	echo "| Unit packages | \`./vm/embedded/definition ./vm/embedded/implementation ./vm/embedded/tests\` |"
++	echo "| Unit filter | \`TestPtlc_|FuzzPtlc\` |"
++	echo "| Unit timeout | \`$UNIT_TIMEOUT\` |"
++	echo "| Fuzz package | \`./vm/embedded/implementation\` |"
++	echo "| Fuzz time per target | \`$FUZZ_TIME\` |"
++	echo "| Fuzz timeout per target | \`$FUZZ_TIMEOUT\` |"
++	echo "| Unit/adversarial raw log | \`$UNIT_LOG\` |"
++	echo
++	echo "## Unit and Adversarial Results"
++	echo
++	awk '
++		function description(test, base) {
++			base = test;
++			sub(/\/.*/, "", base);
++			if (base == "TestPtlc_PointType") return "Rejects unknown point types";
++			if (base == "TestPtlc_LockLength") return "Rejects point locks with invalid lengths";
++			if (base == "TestPtlc_StoredInfoValidation") return "Validates persisted PTLC invariants before use";
++			if (base == "TestPtlc_VerifySignatureStableErrors") return "Keeps signature and point-lock failures stable";
++			if (base == "TestPtlc_VerifySignatureRejectsWrongDomainFields") return "Rejects signatures bound to the wrong chain, contract, id, destination, or point type";
++			if (base == "TestPtlc_ValidateAmountGuards") return "Rejects invalid token amounts for create, unlock, proxy unlock, and reclaim";
++			if (base == "TestPtlc_BIP340OfficialVectors") return "Checks BIP340 verification against official vectors";
++			if (base == "TestPtlc_UnlockRejectsCorruptStoredPointType") return "Rejects corrupt stored PTLC entries before unlock";
++			if (base == "TestPtlc_CreateExpirationBoundary") return "Allows create before expiration and rejects at/after expiration";
++			if (base == "FuzzPtlcValidateSendBlockNoPanic") return "Seed corpus for malformed ABI/send-block validation";
++			if (base == "FuzzPtlcStoredInfoValidation") return "Seed corpus for persisted PTLC invariant validation";
++			if (base == "FuzzPtlcED25519DomainMutationRejected") return "Seed corpus for ED25519 domain mutation rejection";
++			if (base == "FuzzPtlcBIP340DomainMutationRejected") return "Seed corpus for BIP340 domain mutation rejection";
++			if (base == "TestPtlc_spork_gating") return "Requires PTLC spork activation";
++			if (base == "TestPtlc_zero") return "Rejects zero-value creates";
++			if (base == "TestPtlc_unlock") return "Covers ED25519 direct unlock validation and payout";
++			if (base == "TestPtlc_proxy_unlock") return "Covers ED25519 proxy unlock validation and payout";
++			if (base == "TestPtlc_wrongChainSignature") return "Rejects signatures from another chain id";
++			if (base == "TestPtlc_wrongContractSignature") return "Rejects signatures from another embedded contract domain";
++			if (base == "TestPtlc_reclaim") return "Covers expiration and locker reclaim";
++			if (base == "TestPtlc_create_expiration_time") return "Rejects creates at current expiration time";
++			if (base == "TestPtlc_unlock_expiration_time") return "Rejects unlock at expiration";
++			if (base == "TestPtlc_reclaim_expiration_time") return "Allows reclaim at expiration";
++			if (base == "TestPtlc_reclaim_access") return "Restricts reclaim to the time-locking address";
++			if (base == "TestPtlc_nonexistent") return "Rejects unlock/reclaim for unknown PTLC ids";
++			if (base == "TestPtlc_nonexistent_after_unlock") return "Rejects reuse after unlock";
++			if (base == "TestPtlc_nonexistent_after_reclaim") return "Rejects reuse after reclaim";
++			if (base == "TestPtlc_create_expired") return "Rejects already-expired create attempts";
++			if (base == "TestPtlc_unlockBIP340") return "Covers BIP340 direct unlock validation and payout";
++			if (base == "TestPtlc_proxyUnlockBIP340") return "Covers BIP340 proxy unlock validation and payout";
++			if (base == "TestPtlc_proxyUnlockBIP340_lifecycle") return "Covers BIP340 expired, reclaimed, proxy-first, and direct-first lifecycle paths";
++			if (base == "TestPtlc_unlockQsrAccounting") return "Verifies QSR unlock accounting and contract drain";
++			if (base == "TestPtlc_ED25519UnlockReplayCompetition") return "Covers ED25519 proxy-first and direct-first replay competition";
++			return "PTLC regression coverage";
++		}
++		BEGIN {
++			print "| Result | Test | What It Covers | Duration |";
++			print "|---|---|---|---|";
++		}
++		/^--- (PASS|FAIL|SKIP): (Test|Fuzz)Ptlc/ {
++			result=$2;
++			sub(":", "", result);
++			test=$3;
++			duration=$0;
++			sub(/^.*\(/, "", duration);
++			sub(/\).*$/, "", duration);
++			print "| " result " | `" test "` | " description(test) " | " duration " |";
++		}
++	' "$UNIT_LOG"
++	echo
++	echo "## Live Fuzz Results"
++	echo
++	echo "| Result | Fuzz Target | Execs | Interesting Inputs | Duration | Raw Log |"
++	echo "|---|---|---:|---:|---|---|"
++	while IFS=$'\t' read -r target result log_file; do
++		execs="$(awk '/^fuzz: elapsed:/ && /execs:/ { line=$0 } END { if (line == "") { print "n/a"; } else { sub(/^.*execs: /, "", line); sub(/ .*/, "", line); print line; } }' "$log_file")"
++		interesting="$(awk '/^fuzz: elapsed:/ && /new interesting:/ { line=$0 } END { if (line == "") { print "n/a"; } else { sub(/^.*new interesting: /, "", line); sub(/ .*/, "", line); print line; } }' "$log_file")"
++		duration="$(awk '/^ok[[:space:]]+github.com\/zenon-network\/go-zenon\/vm\/embedded\/implementation/ { d=$3 } END { if (d == "") print "n/a"; else print d }' "$log_file")"
++		echo "| $result | \`$target\` | $execs | $interesting | $duration | \`$log_file\` |"
++	done < "$STATUS_FILE"
++	echo
++	echo "## Package Results"
++	echo
++	awk '/^(ok|FAIL)[[:space:]]+github.com\/zenon-network\/go-zenon\/vm\/embedded\/(definition|implementation|tests)/ { print "- `" $0 "`" }' "$UNIT_LOG"
++	while IFS=$'\t' read -r _target _result log_file; do
++		awk '/^(ok|FAIL)[[:space:]]+github.com\/zenon-network\/go-zenon\/vm\/embedded\/implementation/ { print "- `" $0 "`" }' "$log_file"
++	done < "$STATUS_FILE"
++} > "$SUMMARY_FILE"
++
++echo
++echo "Summary written to $SUMMARY_FILE"
++echo "Unit/adversarial log written to $UNIT_LOG"
++echo "Fuzz logs written to $RUN_DIR/fuzz-*.log"
++
++if [ "$SUITE_STATUS" = "PASS" ]; then
++	exit 0
++fi
++exit 1
+diff --git a/testnet/ptlc/run-suite.sh b/testnet/ptlc/run-suite.sh
+new file mode 100644
+index 0000000..c71baaa
+--- /dev/null
++++ b/testnet/ptlc/run-suite.sh
+@@ -0,0 +1,94 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++RESULTS_DIR="${TESTNET_RESULTS_DIR:-$ROOT_DIR/test-results/ptlc}"
++TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
++RUN_DIR="$RESULTS_DIR/$TIMESTAMP"
++LOG_FILE="$RUN_DIR/go-test.log"
++SUMMARY_FILE="$RUN_DIR/summary.md"
++
++RPC_URL="${PTLC_TESTNET_RPC:-http://localhost:35997}"
++GO_TEST_FLAGS="${TESTNET_GO_TEST_FLAGS:--timeout 25m}"
++GOCACHE_DIR="${GOCACHE:-$ROOT_DIR/.gocache}"
++
++mkdir -p "$RUN_DIR" "$GOCACHE_DIR"
++
++echo "PTLC testnet suite"
++echo "  rpc:     $RPC_URL"
++echo "  results: $RUN_DIR"
++echo
++
++set +e
++(
++	cd "$ROOT_DIR"
++	PTLC_TESTNET_RPC="$RPC_URL" GOCACHE="$GOCACHE_DIR" \
++		go test -tags testnet ./testnet/ptlc -count=1 $GO_TEST_FLAGS -v
++) 2>&1 | tee "$LOG_FILE"
++TEST_STATUS="${PIPESTATUS[0]}"
++set -e
++
++if [ "$TEST_STATUS" -eq 0 ]; then
++	SUITE_STATUS="PASS"
++else
++	SUITE_STATUS="FAIL"
++fi
++
++{
++	echo "# PTLC Testnet Suite"
++	echo
++	echo "| Field | Value |"
++	echo "|---|---|"
++	echo "| Status | $SUITE_STATUS |"
++	echo "| Date UTC | $TIMESTAMP |"
++	echo "| RPC endpoint | \`$RPC_URL\` |"
++	echo "| Package | \`./testnet/ptlc\` |"
++	echo "| Flags | \`$GO_TEST_FLAGS\` |"
++	echo "| Raw log | \`$LOG_FILE\` |"
++	echo
++	echo "## Test Results"
++	echo
++	awk '
++		function description(test) {
++			if (test == "TestPtlcCreateValidationViaRPC") {
++				return "Create validation rejects zero amount, bad point type, bad point lock, and expired create";
++			}
++			if (test == "TestPtlcED25519DomainSeparatedUnlockViaRPC") {
++				return "ED25519 unlock requires the domain-separated message and pays the recipient";
++			}
++			if (test == "TestPtlcBIP340ProxyDestinationBindingViaRPC") {
++				return "BIP340 proxy unlock rejects the wrong destination and accepts the bound destination";
++			}
++			if (test == "TestPtlcExpirationAndReclaimViaRPC") {
++				return "Expiration rejects early reclaim and expired unlock, then allows locker reclaim";
++			}
++			if (test == "TestRpcRelayDiagnosticViaRPC") {
++				return "Opt-in diagnostic comparing dedicated RPC and pillar visibility";
++			}
++			return "";
++		}
++		BEGIN {
++			print "| Result | Test | What It Covers | Duration |";
++			print "|---|---|---|---|";
++		}
++		/^--- (PASS|FAIL|SKIP): / {
++			result=$2;
++			sub(":", "", result);
++			test=$3;
++			duration=$0;
++			sub(/^.*\(/, "", duration);
++			sub(/\).*$/, "", duration);
++			print "| " result " | `" test "` | " description(test) " | " duration " |";
++		}
++	' "$LOG_FILE"
++	echo
++	echo "## Package Result"
++	echo
++	awk '/^(ok|FAIL)[[:space:]]+github.com\/zenon-network\/go-zenon\/testnet\/ptlc/ { print "- `" $0 "`" }' "$LOG_FILE"
++} > "$SUMMARY_FILE"
++
++echo
++echo "Summary written to $SUMMARY_FILE"
++echo "Raw log written to $LOG_FILE"
++
++exit "$TEST_STATUS"
+diff --git a/vm/embedded/implementation/ptlc_test.go b/vm/embedded/implementation/ptlc_test.go
+index a821ecf..be64b83 100644
+--- a/vm/embedded/implementation/ptlc_test.go
++++ b/vm/embedded/implementation/ptlc_test.go
+@@ -503,3 +503,227 @@ func TestPtlc_UnlockRejectsCorruptStoredPointType(t *testing.T) {
+ 		t.Fatalf("expected no generated blocks, got %d", len(blocks))
+ 	}
+ }
++
++func TestPtlc_CreateExpirationBoundary(t *testing.T) {
++	method := &CreatePtlcMethod{definition.CreatePtlcMethodName}
++	tests := []struct {
++		name       string
++		now        int64
++		expiration int64
++		want       error
++	}{
++		{name: "before expiration", now: 100, expiration: 101, want: nil},
++		{name: "at expiration", now: 100, expiration: 100, want: constants.ErrInvalidExpirationTime},
++		{name: "after expiration", now: 100, expiration: 99, want: constants.ErrInvalidExpirationTime},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			ctx := newTestPtlcContext(100, test.now)
++			sendBlock := &nom.AccountBlock{
++				Address:       User1.Address,
++				Hash:          types.NewHash([]byte(test.name)),
++				TokenStandard: types.ZnnTokenStandard,
++				Amount:        big.NewInt(1),
++				Data: definition.ABIPtlc.PackMethodPanic(
++					definition.CreatePtlcMethodName,
++					test.expiration,
++					definition.PointTypeED25519,
++					User1.Public,
++				),
++			}
++
++			blocks, err := method.ReceiveBlock(ctx, sendBlock)
++			common.ExpectError(t, err, test.want)
++			if blocks != nil {
++				t.Fatalf("create should not emit contract sends, got %d", len(blocks))
++			}
++			if test.want == nil {
++				info, err := definition.GetPtlcInfo(ctx.Storage(), sendBlock.Hash)
++				common.ExpectError(t, err, nil)
++				if info == nil || info.ExpirationTime != test.expiration {
++					t.Fatalf("unexpected stored PTLC info: %+v", info)
++				}
++			}
++		})
++	}
++}
++
++func FuzzPtlcValidateSendBlockNoPanic(f *testing.F) {
++	validID := types.NewHash([]byte("fuzz-id"))
++	f.Add(uint8(0), definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName, defaultPtlc.ExpirationTime, defaultPtlc.PointType, defaultPtlc.PointLock), int64(2))
++	f.Add(uint8(1), definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, validID), int64(1))
++	f.Add(uint8(2), definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName, validID, bytes.Repeat([]byte{1}, 64)), int64(1))
++	f.Add(uint8(3), definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName, validID, User1.Address, bytes.Repeat([]byte{1}, 64)), int64(1))
++	f.Add(uint8(0), []byte{}, int64(0))
++	f.Add(uint8(2), []byte{0xff, 0x00, 0x01}, int64(-1))
++
++	methods := []validatePtlcSendBlockMethod{
++		&CreatePtlcMethod{definition.CreatePtlcMethodName},
++		&ReclaimPtlcMethod{definition.ReclaimPtlcMethodName},
++		&UnlockPtlcMethod{definition.UnlockPtlcMethodName},
++		&ProxyUnlockPtlcMethod{definition.ProxyUnlockPtlcMethodName},
++	}
++
++	f.Fuzz(func(t *testing.T, methodIndex uint8, data []byte, amountKind int64) {
++		method := methods[int(methodIndex)%len(methods)]
++		_ = method.ValidateSendBlock(&nom.AccountBlock{
++			Data:          append([]byte(nil), data...),
++			Amount:        fuzzAmount(amountKind),
++			TokenStandard: types.ZnnTokenStandard,
++		})
++	})
++}
++
++func FuzzPtlcStoredInfoValidation(f *testing.F) {
++	f.Add(int64(1), int64(100), definition.PointTypeED25519, []byte(User1.Public))
++	f.Add(int64(1), int64(100), definition.PointTypeBIP340, bytes.Repeat([]byte{2}, 32))
++	f.Add(int64(0), int64(100), definition.PointTypeED25519, []byte(User1.Public))
++	f.Add(int64(1), int64(0), definition.PointTypeED25519, []byte(User1.Public))
++	f.Add(int64(1), int64(100), uint8(99), []byte(User1.Public))
++	f.Add(int64(1), int64(100), definition.PointTypeED25519, []byte(User1.Public[:31]))
++
++	f.Fuzz(func(t *testing.T, amount int64, expiration int64, pointType uint8, pointLock []byte) {
++		info := &definition.PtlcInfo{
++			Id:             types.NewHash([]byte("stored-info-fuzz")),
++			TimeLocked:     User1.Address,
++			TokenStandard:  types.ZnnTokenStandard,
++			Amount:         big.NewInt(amount),
++			ExpirationTime: expiration,
++			PointType:      pointType,
++			PointLock:      append([]byte(nil), pointLock...),
++		}
++
++		err := checkStoredPtlcInfo(info)
++		if err == nil {
++			if amount <= 0 {
++				t.Fatalf("accepted non-positive amount %d", amount)
++			}
++			if expiration <= 0 {
++				t.Fatalf("accepted non-positive expiration %d", expiration)
++			}
++			size, ok := definition.PointTypePubKeySizes[pointType]
++			if !ok {
++				t.Fatalf("accepted invalid point type %d", pointType)
++			}
++			if len(pointLock) != int(size) {
++				t.Fatalf("accepted point lock length %d for point type %d", len(pointLock), pointType)
++			}
++		}
++	})
++}
++
++func FuzzPtlcED25519DomainMutationRejected(f *testing.F) {
++	chainIdentifier := uint64(100)
++	id := types.NewHash([]byte("ed25519-domain-fuzz"))
++	destination := User1.Address
++	validSignature := User1.Sign(definition.GetPtlcUnlockMessage(chainIdentifier, definition.PointTypeED25519, id, destination))
++
++	f.Add(chainIdentifier, id.Bytes(), destination.Bytes(), validSignature)
++	f.Add(chainIdentifier+1, id.Bytes(), destination.Bytes(), validSignature)
++	f.Add(chainIdentifier, types.NewHash([]byte("other-id")).Bytes(), destination.Bytes(), validSignature)
++	f.Add(chainIdentifier, id.Bytes(), types.PubKeyToAddress([]byte("other-destination")).Bytes(), validSignature)
++	f.Add(chainIdentifier, id.Bytes(), destination.Bytes(), validSignature[:63])
++
++	f.Fuzz(func(t *testing.T, chainIdentifier uint64, idBytes []byte, destinationBytes []byte, signature []byte) {
++		id := fuzzHash(idBytes)
++		destination := fuzzAddress(destinationBytes)
++		info := &definition.PtlcInfo{
++			Id:             id,
++			TimeLocked:     User1.Address,
++			TokenStandard:  types.ZnnTokenStandard,
++			Amount:         big.NewInt(1),
++			ExpirationTime: 1000000000,
++			PointType:      definition.PointTypeED25519,
++			PointLock:      User1.Public,
++		}
++
++		err := verifyPtlcSignature(info, chainIdentifier, id, destination, signature)
++		expectedSignature := User1.Sign(definition.GetPtlcUnlockMessage(chainIdentifier, definition.PointTypeED25519, id, destination))
++		if err == nil && !bytes.Equal(signature, expectedSignature) {
++			t.Fatalf("accepted unexpected ED25519 signature for chain=%d id=%s destination=%s", chainIdentifier, id, destination)
++		}
++	})
++}
++
++func FuzzPtlcBIP340DomainMutationRejected(f *testing.F) {
++	privateKeyBytes := bytes.Repeat([]byte{7}, 32)
++	privateKey, publicKey := btcec.PrivKeyFromBytes(privateKeyBytes)
++	chainIdentifier := uint64(100)
++	id := types.NewHash([]byte("bip340-domain-fuzz"))
++	destination := User1.Address
++	validSignature, err := schnorr.Sign(privateKey, definition.GetPtlcUnlockMessage(chainIdentifier, definition.PointTypeBIP340, id, destination))
++	if err != nil {
++		f.Fatalf("sign BIP340 seed: %v", err)
++	}
++
++	f.Add(chainIdentifier, id.Bytes(), destination.Bytes(), validSignature.Serialize())
++	f.Add(chainIdentifier+1, id.Bytes(), destination.Bytes(), validSignature.Serialize())
++	f.Add(chainIdentifier, types.NewHash([]byte("other-id")).Bytes(), destination.Bytes(), validSignature.Serialize())
++	f.Add(chainIdentifier, id.Bytes(), types.PubKeyToAddress([]byte("other-destination")).Bytes(), validSignature.Serialize())
++	f.Add(chainIdentifier, id.Bytes(), destination.Bytes(), validSignature.Serialize()[:63])
++
++	f.Fuzz(func(t *testing.T, chainIdentifier uint64, idBytes []byte, destinationBytes []byte, signature []byte) {
++		id := fuzzHash(idBytes)
++		destination := fuzzAddress(destinationBytes)
++		info := &definition.PtlcInfo{
++			Id:             id,
++			TimeLocked:     User1.Address,
++			TokenStandard:  types.ZnnTokenStandard,
++			Amount:         big.NewInt(1),
++			ExpirationTime: 1000000000,
++			PointType:      definition.PointTypeBIP340,
++			PointLock:      schnorr.SerializePubKey(publicKey),
++		}
++
++		err := verifyPtlcSignature(info, chainIdentifier, id, destination, signature)
++		expectedSignature, signErr := schnorr.Sign(privateKey, definition.GetPtlcUnlockMessage(chainIdentifier, definition.PointTypeBIP340, id, destination))
++		common.FailIfErr(t, signErr)
++		if err == nil && !bytes.Equal(signature, expectedSignature.Serialize()) {
++			t.Fatalf("accepted unexpected BIP340 signature for chain=%d id=%s destination=%s", chainIdentifier, id, destination)
++		}
++	})
++}
++
++func fuzzAmount(kind int64) *big.Int {
++	switch kind & 3 {
++	case 0:
++		return nil
++	case 1:
++		return big.NewInt(0)
++	case 2:
++		amount := big.NewInt(kind)
++		if amount.Sign() <= 0 {
++			amount.Neg(amount)
++			amount.Add(amount, big.NewInt(1))
++		}
++		return amount
++	default:
++		amount := big.NewInt(kind)
++		if amount.Sign() >= 0 {
++			amount.Neg(amount)
++			amount.Sub(amount, big.NewInt(1))
++		}
++		return amount
++	}
++}
++
++func fuzzHash(data []byte) types.Hash {
++	if len(data) == types.HashSize {
++		hash, err := types.BytesToHash(data)
++		if err == nil {
++			return hash
++		}
++	}
++	return types.NewHash(data)
++}
++
++func fuzzAddress(data []byte) types.Address {
++	if len(data) == types.AddressSize {
++		address, err := types.BytesToAddress(data)
++		if err == nil {
++			return address
++		}
++	}
++	return types.PubKeyToAddress(data)
++}
+diff --git a/vm/embedded/tests/ptlc_test.go b/vm/embedded/tests/ptlc_test.go
+index 5c7d059..289d5a6 100644
+--- a/vm/embedded/tests/ptlc_test.go
++++ b/vm/embedded/tests/ptlc_test.go
+@@ -97,6 +97,25 @@ func createBIP340Ptlc(t *testing.T, z mock.MockZenon, pointLock []byte, expirati
+ 	return createBlock.Hash
+ }
+ 
++func createED25519Ptlc(t *testing.T, z mock.MockZenon, pointLock []byte, expirationTime int64, token types.ZenonTokenStandard, amount *big.Int) types.Hash {
++	t.Helper()
++
++	createBlock := z.InsertSendBlock(&nom.AccountBlock{
++		Address:   g.User1.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.CreatePtlcMethodName,
++			expirationTime,
++			definition.PointTypeED25519,
++			pointLock,
++		),
++		TokenStandard: token,
++		Amount:        amount,
++	}, nil, mock.SkipVmChanges)
++	z.InsertNewMomentum()
++
++	return createBlock.Hash
++}
++
+ func signBIP340Unlock(t *testing.T, z mock.MockZenon, privateKey *btcec.PrivateKey, id types.Hash, destination types.Address) []byte {
+ 	t.Helper()
+ 
+@@ -1375,3 +1394,118 @@ func TestPtlc_proxyUnlockBIP340_lifecycle(t *testing.T) {
+ 	}).Error(t, constants.ErrDataNonExistent)
+ 	z.InsertNewMomentum()
+ }
++
++func TestPtlc_unlockQsrAccounting(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	ptlcId := createED25519Ptlc(t, z, g.User2.Public, int64(genesisTimestamp+300), types.QsrTokenStandard, big.NewInt(10*g.Zexp))
++
++	z.ExpectBalance(g.User1.Address, types.ZnnTokenStandard, 12000*g.Zexp)
++	z.ExpectBalance(g.User1.Address, types.QsrTokenStandard, 119990*g.Zexp)
++
++	z.ExpectBalance(g.User2.Address, types.ZnnTokenStandard, 8000*g.Zexp)
++	z.ExpectBalance(g.User2.Address, types.QsrTokenStandard, 80000*g.Zexp)
++
++	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 0)
++	z.ExpectBalance(types.PtlcContract, types.QsrTokenStandard, 10*g.Zexp)
++
++	signature := g.User2.Sign(ptlcUnlockMessage(z, definition.PointTypeED25519, ptlcId, g.User2.Address))
++	unlock := z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			ptlcId,
++			signature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	})
++	z.InsertNewMomentum()
++	unlock.Error(t, nil)
++	z.InsertNewMomentum()
++
++	autoreceive(t, z, g.User2.Address)
++	z.InsertNewMomentum()
++
++	z.ExpectBalance(g.User1.Address, types.ZnnTokenStandard, 12000*g.Zexp)
++	z.ExpectBalance(g.User1.Address, types.QsrTokenStandard, 119990*g.Zexp)
++
++	z.ExpectBalance(g.User2.Address, types.ZnnTokenStandard, 8000*g.Zexp)
++	z.ExpectBalance(g.User2.Address, types.QsrTokenStandard, 80010*g.Zexp)
++
++	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 0)
++	z.ExpectBalance(types.PtlcContract, types.QsrTokenStandard, 0)
++}
++
++func TestPtlc_ED25519UnlockReplayCompetition(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	proxyFirstId := createED25519Ptlc(t, z, g.User2.Public, int64(genesisTimestamp+1000), types.ZnnTokenStandard, big.NewInt(10*g.Zexp))
++	proxyFirstSignature := g.User2.Sign(ptlcUnlockMessage(z, definition.PointTypeED25519, proxyFirstId, g.User2.Address))
++	proxyUnlock := z.CallContract(&nom.AccountBlock{
++		Address:   g.User3.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
++			proxyFirstId,
++			g.User2.Address,
++			proxyFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	})
++	z.InsertNewMomentum()
++	proxyUnlock.Error(t, nil)
++
++	directReplay := z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			proxyFirstId,
++			proxyFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	})
++	z.InsertNewMomentum()
++	directReplay.Error(t, constants.ErrDataNonExistent)
++
++	directFirstId := createED25519Ptlc(t, z, g.User2.Public, int64(genesisTimestamp+1000), types.ZnnTokenStandard, big.NewInt(10*g.Zexp))
++	directFirstSignature := g.User2.Sign(ptlcUnlockMessage(z, definition.PointTypeED25519, directFirstId, g.User2.Address))
++	directUnlock := z.CallContract(&nom.AccountBlock{
++		Address:   g.User2.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.UnlockPtlcMethodName,
++			directFirstId,
++			directFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	})
++	z.InsertNewMomentum()
++	directUnlock.Error(t, nil)
++
++	proxyReplay := z.CallContract(&nom.AccountBlock{
++		Address:   g.User3.Address,
++		ToAddress: types.PtlcContract,
++		Data: definition.ABIPtlc.PackMethodPanic(definition.ProxyUnlockPtlcMethodName,
++			directFirstId,
++			g.User2.Address,
++			directFirstSignature,
++		),
++		TokenStandard: types.ZnnTokenStandard,
++		Amount:        big.NewInt(0),
++	})
++	z.InsertNewMomentum()
++	proxyReplay.Error(t, constants.ErrDataNonExistent)
++
++	autoreceive(t, z, g.User2.Address)
++	z.InsertNewMomentum()
++
++	z.ExpectBalance(g.User1.Address, types.ZnnTokenStandard, 11980*g.Zexp)
++	z.ExpectBalance(g.User2.Address, types.ZnnTokenStandard, 8020*g.Zexp)
++	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 0)
++}
+-- 
+2.53.0.windows.2
+

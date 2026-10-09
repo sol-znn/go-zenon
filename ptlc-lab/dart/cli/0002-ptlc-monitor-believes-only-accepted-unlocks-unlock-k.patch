@@ -1,0 +1,424 @@
+From 914a2e18a280c07b0b8214ecbb64b732ff16e9e6 Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Fri, 9 Oct 2026 10:42:02 -0400
+Subject: [PATCH] ptlc: monitor believes only accepted unlocks, unlock keeps a
+ margin, Ed25519 locks are checked
+
+ptlc.monitor printed the first Unlock, ProxyUnlock or Reclaim of an entry it
+found on the contract's chain, accepted or not. Anyone can send a refused
+unlock with a junk witness ahead of the real one, and a counterparty reading
+that would add the tweak to junk and miss its own claim. It now reports
+refused calls as refused, keeps watching, and checks the accepted witness
+against the lock before printing it.
+
+ptlc.unlock and ptlc.proxyUnlock judged expiry by the machine's clock and sent
+with any time left. They now read the frontier momentum and refuse with under
+60 s: an unlock answered after the expiry is refused with its witness public.
+
+ptlc.create refuses an Ed25519 lock that is no point, or a point of small
+order, which the contract accepts and anyone can open.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/ptlc.dart       | 247 ++++++++++++++++++++++++++++++++------------
+ test/ptlc_test.dart |  43 ++++++++
+ 2 files changed, 223 insertions(+), 67 deletions(-)
+ create mode 100644 test/ptlc_test.dart
+
+diff --git a/lib/ptlc.dart b/lib/ptlc.dart
+index 278cd89..056265c 100644
+--- a/lib/ptlc.dart
++++ b/lib/ptlc.dart
+@@ -180,6 +180,96 @@ Future<PtlcInfo> _getById(Hash id) async {
+ Future<int> _chainIdentifier() async =>
+     (await znnClient.ledger.getFrontierMomentum()).chainIdentifier;
+ 
++/// The chain's clock: the frontier momentum's timestamp. The contract judges
++/// an expiry by the momentum it runs in, so this is the clock every check
++/// here reads, never the machine's.
++Future<int> _chainNow() async =>
++    (await znnClient.ledger.getFrontierMomentum()).timestamp;
++
++/// No unlock is sent with less than this left before the entry's expiry. The
++/// call takes two momentums to be answered, and one that lands after the
++/// expiry is refused with its witness already public: for a point lock that is
++/// the secret, which then opens the other leg of a swap for the counterparty
++/// while its own entry comes back to it at expiry.
++const _revealMargin = 60;
++
++String? _tooLateToReveal(PtlcInfo ptlc, int now) {
++  final left = ptlc.expirationTime - now;
++  if (left <= 0) return 'Cannot unlock ptlc. Time lock expired';
++  if (left < _revealMargin) {
++    return 'Only ${left}s left on the chain\'s clock, under the ${_revealMargin}s an '
++        'unlock needs. A call answered after the expiry is refused, and its witness '
++        'is public anyway. Not sending';
++  }
++  return null;
++}
++
++/// Whether the contract's receive block says it accepted the call: eight
++/// bytes of data, 1 for success.
++bool _accepted(List<int>? data) =>
++    data != null && data.length == 8 && Secp256k1.bytesToBigInt(data) == BigInt.one;
++
++AbiFunction? _ptlcFunction(List<int> data) {
++  for (var entry in Definitions.ptlc.entries) {
++    if (const ListEquality().equals(
++        AbiFunction.extractSignature(entry.encodeSignature()),
++        AbiFunction.extractSignature(data))) {
++      return AbiFunction(entry.name!, entry.inputs!);
++    }
++  }
++  return null;
++}
++
++/// Why 32 bytes are not an Ed25519 lock anyone should fund, or null. The
++/// contract checks only the length of an Ed25519 lock (zenon-ptlc GAPS G-17).
++/// Bytes that encode no point make an entry nothing opens, and a point of small
++/// order makes one anything opens: with the identity as the key, the signature
++/// 01 00..00 followed by 32 zero bytes verifies for every message.
++String? ed25519LockProblem(List<int> lock) {
++  final p = (BigInt.one << 255) - BigInt.from(19);
++  final bytes = List<int>.from(lock);
++  final sign = bytes[31] >> 7;
++  bytes[31] &= 0x7f;
++  var y = BigInt.zero;
++  for (var i = 31; i >= 0; i--) {
++    y = (y << 8) | BigInt.from(bytes[i]);
++  }
++  if (y >= p) return 'it is not a canonical Ed25519 point encoding';
++  final d = (BigInt.from(-121665) * BigInt.from(121666).modInverse(p)) % p;
++  final y2 = y * y % p;
++  final u = (y2 - BigInt.one) % p;
++  final v = (d * y2 + BigInt.one) % p;
++  var x = u * v.modPow(BigInt.from(3), p) % p *
++      (u * v.modPow(BigInt.from(7), p) % p).modPow((p - BigInt.from(5)) ~/ BigInt.from(8), p) %
++      p;
++  final vx2 = v * x % p * x % p;
++  if (vx2 == (p - u) % p) {
++    x = x * BigInt.two.modPow((p - BigInt.one) ~/ BigInt.from(4), p) % p;
++  } else if (vx2 != u) {
++    return 'it is not a point on Ed25519, so no signature would ever open it';
++  }
++  if (x == BigInt.zero && sign == 1) return 'it is not a canonical Ed25519 point encoding';
++  // 8·P, by three doublings (a = -1, dbl-2008-hwcd); the identity is (0 : Z : Z).
++  var X = x, Y = y, Z = BigInt.one;
++  for (var i = 0; i < 3; i++) {
++    final a = X * X % p;
++    final b = Y * Y % p;
++    final c = BigInt.two * Z * Z % p;
++    final dd = (p - a) % p;
++    final e = ((X + Y) * (X + Y) - a - b) % p;
++    final g = (dd + b) % p;
++    final f = (g - c) % p;
++    final h = (dd - b) % p;
++    X = e * f % p;
++    Y = g * h % p;
++    Z = f * g % p;
++  }
++  if (X == BigInt.zero && Y == Z) {
++    return 'it is a point of small order, for which signatures anyone can make verify';
++  }
++  return null;
++}
++
+ /// Whether the entry's point lock is this wallet's own key, in which case the
+ /// wallet can produce the witness itself.
+ Future<bool> _lockIsOurKey(PtlcInfo ptlc) async {
+@@ -244,6 +334,13 @@ Future<void> _create() async {
+     return;
+   }
+   final pointLock = _hex(args[5], 'pointLock', lockSize);
++  if (pointType == PtlcPointType.ed25519) {
++    final problem = ed25519LockProblem(pointLock);
++    if (problem != null) {
++      print('${red('Error!')} pointLock is no Ed25519 key to lock funds to: $problem');
++      return;
++    }
++  }
+   if (pointType == PtlcPointType.secp256k1Point &&
+       Secp256k1.parseCompressed(pointLock) == null) {
+     print('${red('Error!')} pointLock is not a compressed secp256k1 point');
+@@ -297,10 +394,9 @@ Future<void> _unlock() async {
+ 
+   Hash id = parseHash(args[1]);
+   PtlcInfo ptlc = await _getById(id);
+-  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+-
+-  if (ptlc.expirationTime <= now) {
+-    print('${red('Error!')} Cannot unlock ptlc. Time lock expired');
++  final late = _tooLateToReveal(ptlc, await _chainNow());
++  if (late != null) {
++    print('${red('Error!')} $late');
+     return;
+   }
+   if (ptlc.hasFixedDestination && ptlc.destination != address) {
+@@ -346,10 +442,9 @@ Future<void> _proxyUnlock() async {
+   Hash id = parseHash(args[1]);
+   Address destination = parseAddress(args[2]);
+   PtlcInfo ptlc = await _getById(id);
+-  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+-
+-  if (ptlc.expirationTime <= now) {
+-    print('${red('Error!')} Cannot unlock ptlc. Time lock expired');
++  final late = _tooLateToReveal(ptlc, await _chainNow());
++  if (late != null) {
++    print('${red('Error!')} $late');
+     return;
+   }
+   if (ptlc.hasFixedDestination && ptlc.destination != destination) {
+@@ -374,34 +469,42 @@ Future<void> _proxyUnlock() async {
+ /// would refuse.
+ Future<bool> _checkWitness(
+     PtlcInfo ptlc, Hash id, Address destination, List<int> witness) async {
++  final problem =
++      await _witnessProblem(ptlc, id, destination, witness, await _chainIdentifier());
++  if (problem != null) {
++    print('${red('Error!')} $problem');
++    return false;
++  }
++  return true;
++}
++
++/// Why a witness does not open an entry for a destination, or null when it
++/// does. The same test the contract makes, against the entry as it was read.
++Future<String?> _witnessProblem(PtlcInfo ptlc, Hash id, Address destination,
++    List<int> witness, int chain) async {
+   switch (ptlc.pointType) {
+     case PtlcPointType.ed25519:
+-      final message = PtlcApi.unlockMessage(
+-          await _chainIdentifier(), ptlc.pointType, id, destination);
+-      if (!await Crypto.verify(witness, message, ptlc.pointLock)) {
+-        print('${red('Error!')} the signature does not verify for this entry and destination');
+-        return false;
++      final message = PtlcApi.unlockMessage(chain, ptlc.pointType, id, destination);
++      if (witness.length != 64 ||
++          !await Crypto.verify(witness, message, ptlc.pointLock)) {
++        return 'the signature does not verify for this entry and destination';
+       }
+-      return true;
++      return null;
+     case PtlcPointType.bip340:
+-      final message = PtlcApi.unlockMessage(
+-          await _chainIdentifier(), ptlc.pointType, id, destination);
+-      if (!Bip340.verify(ptlc.pointLock, message, witness)) {
+-        print('${red('Error!')} the signature does not verify for this entry and destination');
+-        return false;
++      final message = PtlcApi.unlockMessage(chain, ptlc.pointType, id, destination);
++      if (witness.length != 64 || !Bip340.verify(ptlc.pointLock, message, witness)) {
++        return 'the signature does not verify for this entry and destination';
+       }
+-      return true;
++      return null;
+     case PtlcPointType.secp256k1Point:
+       final t = Secp256k1.parseScalar(witness);
+       if (t == null ||
+           !const ListEquality().equals(Secp256k1.scalarToPoint(t), ptlc.pointLock)) {
+-        print('${red('Error!')} the scalar is not the one behind this entry\'s point');
+-        return false;
++        return 'the scalar is not the one behind this entry\'s point';
+       }
+-      return true;
++      return null;
+     default:
+-      print('${red('Error!')} unknown point type ${ptlc.pointType}');
+-      return false;
++      return 'unknown point type ${ptlc.pointType}';
+   }
+ }
+ 
+@@ -413,7 +516,7 @@ Future<void> _reclaim() async {
+   }
+ 
+   Hash id = parseHash(args[1]);
+-  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
++  int now = await _chainNow();
+   PtlcInfo ptlc = await _getById(id);
+ 
+   if (ptlc.expirationTime > now) {
+@@ -445,12 +548,11 @@ Future<void> _get() async {
+ 
+   Hash id = parseHash(args[1]);
+   PtlcInfo ptlc = await _getById(id);
+-  _printInfo(ptlc);
++  _printInfo(ptlc, await _chainNow());
+   print('Done');
+ }
+ 
+-void _printInfo(PtlcInfo ptlc) {
+-  int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
++void _printInfo(PtlcInfo ptlc, int now) {
+   print('Ptlc id ${ptlc.id} with amount ${ptlc.amount} ${ptlc.tokenStandard}');
+   print('   Point type ${PtlcPointType.name(ptlc.pointType)}, lock ${_h(ptlc.pointLock)}');
+   if (ptlc.expirationTime > now) {
+@@ -532,52 +634,55 @@ Future<void> _monitor() async {
+ 
+   Hash id = parseHash(args[1]);
+   PtlcInfo ptlc = await _getById(id);
+-  _printInfo(ptlc);
++  _printInfo(ptlc, await _chainNow());
+   print('Monitoring ptlc id ${ptlc.id}');
++  final chain = await _chainIdentifier();
+ 
+-  final contractHeight = (await znnClient.ledger.getFrontierAccountBlock(ptlcAddress))?.height ?? 0;
+-  var lastHeight = contractHeight;
++  var lastHeight = (await znnClient.ledger.getFrontierAccountBlock(ptlcAddress))?.height ?? 0;
+ 
++  // Every call on the entry since the watch began, in the contract's order. A
++  // refused call is anyone's to send and proves nothing: an unlock with a junk
++  // witness, sent ahead of the real one, must not be taken for it. Only the
++  // call the contract accepted closed the entry, and its witness is checked
++  // against the lock before it is printed as the one that opened it.
+   while (true) {
+     await Future.delayed(const Duration(seconds: 10));
+     final frontier = await znnClient.ledger.getFrontierMomentum();
+-
+-    // the entry is gone: find the block that took it
+-    try {
+-      await znnClient.embedded.ptlc.getById(id);
+-    } catch (_) {
+-      final head = (await znnClient.ledger.getFrontierAccountBlock(ptlcAddress))?.height ?? 0;
+-      for (var h = lastHeight + 1; h <= head; h++) {
+-        final blocks = await znnClient.ledger.getAccountBlocksByHeight(ptlcAddress, h, 1);
+-        for (final b in blocks.list ?? []) {
+-          final paired = b.pairedAccountBlock;
+-          if (paired == null) continue;
+-          AbiFunction? f;
+-          for (var entry in Definitions.ptlc.entries) {
+-            if (const ListEquality().equals(
+-                AbiFunction.extractSignature(entry.encodeSignature()),
+-                AbiFunction.extractSignature(paired.data))) {
+-              f = AbiFunction(entry.name!, entry.inputs!);
+-            }
+-          }
+-          if (f == null) continue;
+-          final txArgs = f.decode(paired.data);
+-          if (txArgs[0].toString() != id.toString()) continue;
+-          if (f.name == 'Unlock') {
+-            print('Ptlc was unlocked by ${paired.address}; witness ${green(_h(txArgs[1]))}');
+-          } else if (f.name == 'ProxyUnlock') {
+-            print(
+-                'Ptlc was unlocked to ${txArgs[1]} by ${paired.address}; witness ${green(_h(txArgs[2]))}');
+-          } else if (f.name == 'Reclaim') {
+-            print('Ptlc was reclaimed by ${paired.address}');
+-          }
++    final head = (await znnClient.ledger.getFrontierAccountBlock(ptlcAddress))?.height ?? 0;
++    for (var h = lastHeight + 1; h <= head; h++) {
++      final blocks = await znnClient.ledger.getAccountBlocksByHeight(ptlcAddress, h, 1);
++      for (final b in blocks.list ?? []) {
++        final paired = b.pairedAccountBlock;
++        if (paired == null) continue;
++        final f = _ptlcFunction(paired.data);
++        if (f == null || f.name == 'Create') continue;
++        final txArgs = f.decode(paired.data);
++        if (txArgs[0].toString() != id.toString()) continue;
++        if (!_accepted(b.data)) {
++          print('A ${f.name} of this entry by ${paired.address} was refused; still watching');
++          continue;
++        }
++        if (f.name == 'Reclaim') {
++          print('Ptlc was reclaimed by ${paired.address}');
+           print('Done');
+           return;
+         }
++        final proxy = f.name == 'ProxyUnlock';
++        final destination = proxy ? parseAddress(txArgs[1].toString()) : paired.address;
++        final witness = List<int>.from(proxy ? txArgs[2] : txArgs[1]);
++        final problem = await _witnessProblem(ptlc, id, destination, witness, chain);
++        if (problem != null) {
++          print('${red('Error!')} the contract paid $destination on a witness that does not open '
++              'the lock as it was read: $problem');
++          exit(-1);
++        }
++        print(proxy
++            ? 'Ptlc was unlocked to $destination by ${paired.address}; witness ${green(_h(witness))}'
++            : 'Ptlc was unlocked by ${paired.address}; witness ${green(_h(witness))}');
++        print('Done');
++        return;
+       }
+-      lastHeight = head;
+-      print('Ptlc entry is gone; the block that took it was not found yet');
+-      continue;
++      lastHeight = h;
+     }
+ 
+     if (frontier.timestamp >= ptlc.expirationTime && ptlc.timeLocked == address) {
+@@ -599,7 +704,11 @@ Future<void> _message() async {
+   }
+   final id = parseHash(args[1]);
+   final destination = parseAddress(args[2]);
+-  final pointType = int.parse(args[3]);
++  final pointType = int.tryParse(args[3]);
++  if (pointType == null || PtlcPointType.lockSizes[pointType] == null) {
++    print('${red('Error!')} pointType is 0, 1 or 2');
++    return;
++  }
+   final chain = await _chainIdentifier();
+   print('Chain identifier: $chain');
+   print('Unlock message: ${green(_h(PtlcApi.unlockMessage(chain, pointType, id, destination)))}');
+@@ -615,7 +724,11 @@ Future<void> _sign() async {
+   final id = parseHash(args[1]);
+   final destination = parseAddress(args[2]);
+   final secret = _hex(args[3], 'secretKey', 32);
+-  final pointType = args.length == 5 ? int.parse(args[4]) : PtlcPointType.bip340;
++  final pointType = args.length == 5 ? int.tryParse(args[4]) : PtlcPointType.bip340;
++  if (pointType == null) {
++    print('${red('Error!')} pointType is 0 or 1');
++    return;
++  }
+   final message = PtlcApi.unlockMessage(await _chainIdentifier(), pointType, id, destination);
+   List<int> signature;
+   List<int> publicKey;
+diff --git a/test/ptlc_test.dart b/test/ptlc_test.dart
+new file mode 100644
+index 0000000..12d299a
+--- /dev/null
++++ b/test/ptlc_test.dart
+@@ -0,0 +1,43 @@
++import 'package:convert/convert.dart';
++import 'package:test/test.dart';
++import 'package:znn_cli_dart/ptlc.dart';
++
++// The vectors are @noble/curves' (1.9.7): the eight points of the curve's
++// small subgroup, a string that decodes to no point, and an honest key.
++void main() {
++  group('ed25519LockProblem', () {
++    const smallOrder = [
++      '0100000000000000000000000000000000000000000000000000000000000000',
++      '26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05',
++      '0000000000000000000000000000000000000000000000000000000000000000',
++      'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a',
++      'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
++      'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa',
++      '0000000000000000000000000000000000000000000000000000000000000080',
++      '26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85',
++    ];
++    for (final key in smallOrder) {
++      test('refuses the small-order point $key', () {
++        expect(ed25519LockProblem(hex.decode(key)), contains('small order'));
++      });
++    }
++    test('refuses bytes that are no point', () {
++      expect(
++          ed25519LockProblem(hex.decode(
++              '0200000000000000000000000000000000000000000000000000000000000000')),
++          contains('not a point'));
++    });
++    test('refuses y at or above the field prime', () {
++      expect(
++          ed25519LockProblem(hex.decode(
++              'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f')),
++          contains('canonical'));
++    });
++    test('takes an honest public key', () {
++      expect(
++          ed25519LockProblem(hex.decode(
++              'ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c')),
++          isNull);
++    });
++  });
++}
+-- 
+2.53.0.windows.2
+

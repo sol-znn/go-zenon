@@ -1,0 +1,52 @@
+{
+  "note": "Public synthetic nonce rounds and signatures only. Deterministic test seeds are not fresh entropy. No journal bridge, authentication, durable secret ownership, or live-chain claim.",
+  "schema": "ptlc-public-nonce-round-fixture-v1",
+  "vectors": [
+    {
+      "adaptor_presignature_hex": "034b0e2145b696f484e5fe60c2faad725573ca7f044bad6ed05b888d725c98277aa51e35c5cef2699a776357f96f0c65fc7cb3a747b9aa22cd78e3960ff7c399fe",
+      "binding_digest_hex": "cdfdacfd8675c0a668cceb3756a961be3a3fbbebd33891b339cb3bb47f99e20e",
+      "leg": "bitcoin",
+      "message_hex": "139aa1aa431a52ae7e461638f81cb1e3395e38c6ef815c5c202fabbcbd23530f",
+      "nonce_commitments_hex": [
+        "84cee6d97d5558e33dad12e99c06ec3cc2cd2fb69933a1654386280994b997a7",
+        "173ec909b02537c656401126c6b2be2c6677639e3ceedc5a32fc9e887a3f649c"
+      ],
+      "partial_signatures_hex": [
+        "ecebbc7b2be64315fc88e4ec694e8017fe6d4a3bbe92441af945d92c3200dfe2",
+        "39369ea02d6f7ee1ceed34e910df96f0cb5a13f911d93b10152eff05c3a15dc9"
+      ],
+      "public_key_hex": "04812b3a096ac30b5c6beb21812ec7a5504abf47199e0c7f00b3708808061c5a",
+      "public_nonces_hex": [
+        "0343f2a0736dc5acc1cb9f247002445c26bb5e89ff632352f270404f190eae3deb030f1c46576e935518ae23f450ebaa171ca557c4ac1f52bbf86168d32e16b330fd",
+        "036d5e82b842c9acb143cfb0ec6decb4903983d6ecd7af19197dae5efbf6a0b1fa0396f69d10ae05abc4b45ad604d38814b7fb7b4f27eef1986665544eae32c3294e"
+      ],
+      "round_digest_hex": "a8332e56ce59cda3eaa650a50e1858297fa1432a48648731e9c6c8e93aff4c5d",
+      "round_id_hex": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+      "signature_hex": "e0090f4b163f378615adf8167d58821b7e38b4e8273e6125981a16f7612f00169e172ebec7eb6293705c50f268055ef575aca040b2a31bc671dc8f08f0bc92f7",
+      "valid": true
+    },
+    {
+      "adaptor_presignature_hex": "02ac3e23f93ad78ec7441c7d8d2d79b80d180412229b42577677a303061260a227548f35f303dd2eb193e0dd09a2d0b21c7a85b08ec583e23c4204133d3898a42c",
+      "binding_digest_hex": "9c479abda2256dd14c3cf88105e466d33b36c20314e2f75077849b0a561c55ee",
+      "leg": "zenon",
+      "message_hex": "e357d6597d0149f0adb2ab0f0d7dff932412e2f55fd9b94bb9301c8ccf9df974",
+      "nonce_commitments_hex": [
+        "ef5418f414ad80a78898127a875d0c25b87ffef6fafe18dd08d19d1d64dbb61f",
+        "092686f1835350accd5eb72dec481c32f79322c01518fd4ef871366449858b8e"
+      ],
+      "partial_signatures_hex": [
+        "0d5db526db916e1713d73270e54be99ebc0fce13b81ba8292a110f7b949b2131",
+        "473180cc284bc09a8009aa98bd84c87dbe75e27b0d683a1317f303c1a3fd82fb"
+      ],
+      "public_key_hex": "b6968afcd8cca764d730f334c0b1652ee6d8cc090d400157a94f68966792a2e3",
+      "public_nonces_hex": [
+        "0361f4afd8d2fcda2c7b2508c56a23c93acb6aa99d6aae15902ff95fcd9df79ede030b1dd98e5ec414991a00624be89052c2190c980c75073b01d790acee87bfc7b4",
+        "02fe76b041d5e23a24f1c29fdc6ba9237d18a76451e3c66c7d3e4441c1da730a070268e499dda096072905734a399f29b961c36c42208481cc8a80f41ff79185c84f"
+      ],
+      "round_digest_hex": "b6cd5deb14157b58162f2c8fed9db0384af38f191e3a80ddc5ff00acee36fa48",
+      "round_id_hex": "3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e",
+      "signature_hex": "9e3bd36c01880753412ac83bf12c7d599b0adf59f0cd918e0f35cf8136ecd3c15b963cfa0ae435b89ae7e410a9d7b923818cb795cc8ae943490b1a443f9fab33",
+      "valid": true
+    }
+  ]
+}

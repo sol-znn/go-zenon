@@ -1,0 +1,161 @@
+From 97c0061e1884953719df4314187aabc4581d549d Mon Sep 17 00:00:00 2001
+From: so1_sanctum <so1_sanctum@pm.me>
+Date: Fri, 9 Oct 2026 10:35:08 -0400
+Subject: [PATCH] ptlc: the tweaked swap in the safe order, and the two ways
+ the other order fails
+
+The holder of the secret locks first and expires last. The mock-chain swap had
+Bob, who does not hold t, locking first and expiring last, which lets Alice
+claim his entry without funding hers, or take hers back at its expiry and claim
+his afterwards. Two tests run those cases, and SECURITY.md says why a refused
+unlock still gives its witness away.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/ptlc/SECURITY.md                | 24 +++++++
+ vm/embedded/tests/ptlc_point_test.go | 93 +++++++++++++++++++++++++++-
+ 2 files changed, 114 insertions(+), 3 deletions(-)
+
+diff --git a/docs/ptlc/SECURITY.md b/docs/ptlc/SECURITY.md
+index 6f4c016..14cf4c8 100644
+--- a/docs/ptlc/SECURITY.md
++++ b/docs/ptlc/SECURITY.md
+@@ -78,3 +78,27 @@ the signature's destination binding is the only protection, as before.
+ 
+ The scalar check is one fixed-base scalar multiplication per unlock, charged as
+ `EmbeddedWWithdraw` like every other unlock.
++
++## A refused unlock still publishes its witness
++
++The contract judges an unlock when it receives it, against the timestamp of the
++momentum it runs in. The caller's send block is on the chain, with its witness in
++the clear, before that: a call sent just before `expirationTime` and received just
++after it is refused with `ErrExpired`, and its witness is public all the same. For a
++point lock the witness is the scalar itself; for a key lock made from an adaptor
++pre-signature it gives the adaptor secret to whoever holds the pre-signature. Either
++way the counterparty can reclaim its own entry at its expiry and use the secret on the
++other leg. A client must not send an unlock with less than a few momentums left on
++the chain's clock; the tooling in zenon-ptlc refuses with under 60 seconds.
++
++## Who locks first in a swap
++
++Two entries that one secret opens are a swap only if the party holding the secret
++locks first and its entry expires last. The other party locks once that entry is on
++the chain, with an expiry earlier by at least the time it needs to claim after the
++secret appears. In the other order the holder can claim the counterparty's entry
++without ever funding its own, or wait out its own entry, take it back, and claim the
++counterparty's afterwards. The contract cannot tell the two orders apart: each call
++is valid in both. `TestPtlc_pointLock_swapOrder_wrongOrderLosesBob` and
++`TestPtlc_pointLock_swapOrder_lateRevealCostsTheRevealer` in
++`vm/embedded/tests/ptlc_point_test.go` run both cases on the mock chain.
+diff --git a/vm/embedded/tests/ptlc_point_test.go b/vm/embedded/tests/ptlc_point_test.go
+index e99ff66..b4562d7 100644
+--- a/vm/embedded/tests/ptlc_point_test.go
++++ b/vm/embedded/tests/ptlc_point_test.go
+@@ -302,9 +302,11 @@ func TestPtlc_pointLock_tweakedSwap(t *testing.T) {
+ 		t.Fatal("the tweak did not change the point")
+ 	}
+ 
+-	// Bob locks first and expires last; Alice's lock expires first
+-	bobLock := createPointPtlc(t, z, bob, tPoint, alice.Address, int64(genesisTimestamp+6000), types.ZnnTokenStandard, big.NewInt(10*g.Zexp), nil)
+-	aliceLock := createPointPtlc(t, z, alice, t2Point, bob.Address, int64(genesisTimestamp+3000), types.QsrTokenStandard, big.NewInt(100*g.Zexp), nil)
++	// Alice holds t, so she locks first and her entry expires last. Bob locks
++	// only once hers is on the chain, and his expires first: whenever Alice
++	// claims his entry, publishing t, hers is still open to him.
++	aliceLock := createPointPtlc(t, z, alice, t2Point, bob.Address, int64(genesisTimestamp+6000), types.QsrTokenStandard, big.NewInt(100*g.Zexp), nil)
++	bobLock := createPointPtlc(t, z, bob, tPoint, alice.Address, int64(genesisTimestamp+3000), types.ZnnTokenStandard, big.NewInt(10*g.Zexp), nil)
+ 
+ 	// Bob cannot open Alice's leg yet: he does not know t
+ 	unlockPtlcAs(t, z, bob, aliceLock, dTweak, constants.ErrInvalidPointScalar)
+@@ -323,3 +325,88 @@ func TestPtlc_pointLock_tweakedSwap(t *testing.T) {
+ 	z.ExpectBalance(types.PtlcContract, types.ZnnTokenStandard, 0)
+ 	z.ExpectBalance(types.PtlcContract, types.QsrTokenStandard, 0)
+ }
++
++func reclaimPtlcAs(t *testing.T, z mock.MockZenon, caller *wallet.KeyPair, id types.Hash, expected error) {
++	t.Helper()
++	call := z.CallContract(&nom.AccountBlock{
++		Address:   caller.Address,
++		ToAddress: types.PtlcContract,
++		Data:      definition.ABIPtlc.PackMethodPanic(definition.ReclaimPtlcMethodName, id),
++	})
++	z.InsertNewMomentum()
++	z.InsertNewMomentum()
++	call.Error(t, expected)
++}
++
++// The order the tweaked swap above uses is the protocol's, not the contract's:
++// the contract does what each call asks. This is the swap in the order SPEC.md
++// §3 had until 2026-10-09, with the party who does not hold t locking first and
++// expiring last. Alice waits out her own entry, takes it back, and then claims
++// Bob's with t. When t becomes public, the entry Bob needed it for is gone.
++func TestPtlc_pointLock_swapOrder_wrongOrderLosesBob(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	alice, bob := g.User1, g.User2
++
++	var kt, kd btcec.ModNScalar
++	kt.SetInt(5550123)
++	kd.SetInt(777)
++	tSecret := scalarBytes(&kt)
++	dTweak := scalarBytes(&kd)
++	t2Secret := addScalars(tSecret, dTweak)
++
++	bobLock := createPointPtlc(t, z, bob, pointFor(tSecret), alice.Address, int64(genesisTimestamp+6000), types.ZnnTokenStandard, big.NewInt(10*g.Zexp), nil)
++	aliceLock := createPointPtlc(t, z, alice, pointFor(t2Secret), bob.Address, int64(genesisTimestamp+3000), types.QsrTokenStandard, big.NewInt(100*g.Zexp), nil)
++
++	// past Alice's expiry, before Bob's
++	z.InsertMomentumsTo(310)
++	reclaimPtlcAs(t, z, alice, aliceLock, nil)
++	unlockPtlcAs(t, z, alice, bobLock, tSecret, nil)
++
++	// t is public now, and too late to be of use to Bob
++	unlockPtlcAs(t, z, bob, aliceLock, t2Secret, constants.ErrDataNonExistent)
++
++	autoreceive(t, z, alice.Address)
++	z.ExpectBalance(alice.Address, types.ZnnTokenStandard, 12010*g.Zexp)
++	z.ExpectBalance(alice.Address, types.QsrTokenStandard, 120000*g.Zexp)
++	z.ExpectBalance(bob.Address, types.ZnnTokenStandard, 7990*g.Zexp)
++	z.ExpectBalance(bob.Address, types.QsrTokenStandard, 80000*g.Zexp)
++}
++
++// The same attempt against the safe order fails, and costs Alice. Her claim on
++// Bob's entry comes after his expiry, so the contract refuses it; but the
++// refused call still carries t, and her own entry is open to Bob for another
++// fifty minutes. Bob takes his ZNN back and her QSR as well. A witness is
++// public the moment its block is, whatever the contract answers, which is why
++// a client must not reveal one close to the deadline.
++func TestPtlc_pointLock_swapOrder_lateRevealCostsTheRevealer(t *testing.T) {
++	z := mock.NewMockZenon(t)
++	defer z.StopPanic()
++	activatePtlc(t, z)
++
++	alice, bob := g.User1, g.User2
++
++	var kt, kd btcec.ModNScalar
++	kt.SetInt(4440321)
++	kd.SetInt(999)
++	tSecret := scalarBytes(&kt)
++	dTweak := scalarBytes(&kd)
++	t2Secret := addScalars(tSecret, dTweak)
++
++	aliceLock := createPointPtlc(t, z, alice, pointFor(t2Secret), bob.Address, int64(genesisTimestamp+6000), types.QsrTokenStandard, big.NewInt(100*g.Zexp), nil)
++	bobLock := createPointPtlc(t, z, bob, pointFor(tSecret), alice.Address, int64(genesisTimestamp+3000), types.ZnnTokenStandard, big.NewInt(10*g.Zexp), nil)
++
++	// past Bob's expiry, before Alice's
++	z.InsertMomentumsTo(310)
++	unlockPtlcAs(t, z, alice, bobLock, tSecret, constants.ErrExpired)
++	reclaimPtlcAs(t, z, bob, bobLock, nil)
++	unlockPtlcAs(t, z, bob, aliceLock, t2Secret, nil)
++
++	autoreceive(t, z, bob.Address)
++	z.ExpectBalance(bob.Address, types.ZnnTokenStandard, 8000*g.Zexp)
++	z.ExpectBalance(bob.Address, types.QsrTokenStandard, 80100*g.Zexp)
++	z.ExpectBalance(alice.Address, types.ZnnTokenStandard, 12000*g.Zexp)
++	z.ExpectBalance(alice.Address, types.QsrTokenStandard, 119900*g.Zexp)
++}
+-- 
+2.53.0.windows.2
+

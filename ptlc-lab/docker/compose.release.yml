@@ -1,0 +1,36 @@
+# Builds the node, the scenarios and the suite from go-zenon release/0.0.9 and
+# patches/ instead of from the tree this directory sits in:
+#
+#   docker compose -f compose.yml -f docker/compose.release.yml up -d --build
+#
+# Dropping the `gozenon` context leaves the Dockerfile to its own source stage,
+# which fetches the release line at a pinned commit, applies patches/ and
+# holds the result to the tree hash of the branch they were exported from.
+#
+# The images carry their own tags, so a build with this file does not replace
+# the ones a plain `up` runs.
+x-release: &release
+  additional_contexts: !reset {}
+
+services:
+  pillar: &node
+    image: zenon-ptlc/znnd:release-0.0.9
+    build: *release
+  pillar2: *node
+  pillar3: *node
+  rpc: *node
+  observer: *node
+  lab: &lab
+    image: zenon-ptlc/lab:release-0.0.9
+    build: *release
+  cli: *lab
+  nom-to-nom: *lab
+  nom-to-btc: *lab
+  keyswap: *lab
+  test-go: &suite
+    image: zenon-ptlc/suite:release-0.0.9
+    build: *release
+  test-live: *suite
+  test-scenario:
+    image: zenon-ptlc/scenario:release-0.0.9
+    build: *release

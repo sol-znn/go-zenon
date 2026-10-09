@@ -1,0 +1,90 @@
+keyswap on the devnet, killed between publishing a block and saving it, then run again over the same directory.
+The program's own timestamps are the host's local time, four hours behind UTC; the date lines are UTC.
+
+=== -kill bob:created
+Fri, Oct  9, 2026  7:22:44 PM
+2026/10/09 15:22:45 state in kill-bob
+2026/10/09 15:22:45 alice is at "offered"
+2026/10/09 15:22:47 bob   is at "accepted"
+2026/10/09 15:22:47 alice is at "accepted"
+2026/10/09 15:22:47 alice is at "locking"
+2026/10/09 15:22:47 alice locks 1000000000 of zts1qsrxxxxxxxxxxxxxmrhjll for z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e until 1791574360: entry e20dbc5b45725dc18907e9e73222ff26f0c1e7710dd12f75915ec3fa66d5c385
+2026/10/09 15:22:47 alice is at "locked"
+2026/10/09 15:23:11 alice is at "presigned"
+2026/10/09 15:23:13 bob   is at "checking"
+2026/10/09 15:23:13 bob   is at "locking"
+2026/10/09 15:23:13 bob   locks 100000000 of zts1znnxxxxxxxxxxxxx9z4ulx for z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d until 1791574060: entry efb683a2acc3f18410175a70cf0d749473d826c4b59fe0da18737a9953f1b2f4
+2026/10/09 15:23:13 bob   dies here, as asked, having created and saved nothing; run again with -dir kill-bob
+exit 3
+  "stage": "presigned",
+  "stage": "locking",
+--- run again
+Fri, Oct  9, 2026  7:23:13 PM
+2026/10/09 15:23:13 state in kill-bob
+2026/10/09 15:23:13 alice carries on from "presigned"
+2026/10/09 15:23:13 bob   carries on from "locking"
+2026/10/09 15:23:13 bob   found the entry it made before it stopped: efb683a2acc3f18410175a70cf0d749473d826c4b59fe0da18737a9953f1b2f4
+2026/10/09 15:23:13 bob   is at "locked"
+2026/10/09 15:23:41 bob   is at "presigned"
+2026/10/09 15:23:43 alice is at "checking"
+2026/10/09 15:23:43 alice is at "revealing"
+2026/10/09 15:23:43 alice claims Bob's entry with the completed signature: e98a722e0b4f27b130e1882af923d635795c0e7e36ff0b0a2005e73dbe4a795f
+2026/10/09 15:23:43 alice is at "claiming"
+2026/10/09 15:23:50 bob   read t from z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d's unlock at contract height 885 (accepted: true)
+2026/10/09 15:23:50 bob   is at "secret"
+2026/10/09 15:23:50 bob   claims Alice's entry with the completed signature: c80bf516dab52be59a65dfa78a9d2210c2a79d5c343d1881155f05a915f8e3c6
+2026/10/09 15:23:50 bob   is at "claiming"
+2026/10/09 15:24:10 alice done: swapped
+2026/10/09 15:24:10 alice is at "done"
+2026/10/09 15:24:20 bob   is at "sweeping"
+2026/10/09 15:24:20 bob   done: swapped
+2026/10/09 15:24:20 bob   is at "done"
+2026/10/09 15:24:20 alice ended: swapped
+2026/10/09 15:24:20 bob   ended: swapped
+done: swapped. Alice's entry e20dbc5b45725dc18907e9e73222ff26f0c1e7710dd12f75915ec3fa66d5c385, Bob's efb683a2acc3f18410175a70cf0d749473d826c4b59fe0da18737a9953f1b2f4; on the chain, two signatures by two keys nobody has seen before
+exit 0
+Fri, Oct  9, 2026  7:24:20 PM
+
+=== -kill alice:claimed
+Fri, Oct  9, 2026  7:24:20 PM
+2026/10/09 15:24:20 state in kill-alice
+2026/10/09 15:24:20 alice is at "offered"
+2026/10/09 15:24:22 bob   is at "accepted"
+2026/10/09 15:24:22 alice is at "accepted"
+2026/10/09 15:24:22 alice is at "locking"
+2026/10/09 15:24:22 alice locks 1000000000 of zts1qsrxxxxxxxxxxxxxmrhjll for z1qp3yph55qgresyytz83anynr2f4z39x2z3ej3e until 1791574460: entry b60f10ffca525524fa90cbf6c25163000d07b9e7d5c7c0ac6a4a6f99fb075c2d
+2026/10/09 15:24:22 alice is at "locked"
+2026/10/09 15:24:50 alice is at "presigned"
+2026/10/09 15:24:52 bob   is at "checking"
+2026/10/09 15:24:52 bob   is at "locking"
+2026/10/09 15:24:52 bob   locks 100000000 of zts1znnxxxxxxxxxxxxx9z4ulx for z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d until 1791574160: entry 4140cd5c07781db855d120c91a5f77928e37274827753d1bcab36828191a17fb
+2026/10/09 15:24:52 bob   is at "locked"
+2026/10/09 15:25:10 bob   is at "presigned"
+2026/10/09 15:25:12 alice is at "checking"
+2026/10/09 15:25:12 alice is at "revealing"
+2026/10/09 15:25:12 alice claims Bob's entry with the completed signature: 63fd6a598f181a07ff8f46cdbc37ba0cf9717fc43ad067e6112364c775f4b827
+2026/10/09 15:25:12 alice dies here, as asked, having claimed and saved nothing; run again with -dir kill-alice
+exit 3
+  "stage": "revealing",
+  "stage": "presigned",
+--- run again
+Fri, Oct  9, 2026  7:25:12 PM
+2026/10/09 15:25:12 state in kill-alice
+2026/10/09 15:25:13 alice carries on from "revealing"
+2026/10/09 15:25:13 bob   carries on from "presigned"
+2026/10/09 15:25:13 alice claims Bob's entry with the completed signature: 600434027495edbdfcb105f993c6bf88850dd492aaf73f443ebca39fd22b1555
+2026/10/09 15:25:13 alice is at "claiming"
+2026/10/09 15:25:21 bob   read t from z1qq6eg8n43g032hanpsfp02qcdmv7zfj3y2lt5d's unlock at contract height 891 (accepted: true)
+2026/10/09 15:25:21 bob   is at "secret"
+2026/10/09 15:25:21 bob   claims Alice's entry with the completed signature: a28cb655b7af215a3bba86c8356539510a46e30e900c0745d4a3af1456616d6d
+2026/10/09 15:25:21 bob   is at "claiming"
+2026/10/09 15:25:41 alice done: swapped
+2026/10/09 15:25:41 alice is at "done"
+2026/10/09 15:25:51 bob   is at "sweeping"
+2026/10/09 15:25:51 bob   done: swapped
+2026/10/09 15:25:51 bob   is at "done"
+2026/10/09 15:25:51 alice ended: swapped
+2026/10/09 15:25:51 bob   ended: swapped
+done: swapped. Alice's entry b60f10ffca525524fa90cbf6c25163000d07b9e7d5c7c0ac6a4a6f99fb075c2d, Bob's 4140cd5c07781db855d120c91a5f77928e37274827753d1bcab36828191a17fb; on the chain, two signatures by two keys nobody has seen before
+exit 0
+Fri, Oct  9, 2026  7:25:51 PM

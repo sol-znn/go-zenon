@@ -1,0 +1,8 @@
+# A patch is applied byte for byte and its result is checked against a tree
+# hash (docker/fetch-and-patch.sh). A checkout that rewrites line endings
+# would change both. The same goes for anything a container executes.
+*.patch -text
+*.sh text eol=lf
+docker/Dockerfile text eol=lf
+devnet/assets/** -text
+test/vectors/** -text
