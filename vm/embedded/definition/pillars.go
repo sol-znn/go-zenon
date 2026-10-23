@@ -48,6 +48,20 @@ const (
 		{"type":"function","name":"Delegate", "inputs":[{"name":"name","type":"string"}]},
 		{"type":"function","name":"Undelegate","inputs":[]},
 		{"type":"function","name":"CollectReward","inputs":[]},
+		{"type":"function","name":"LockOwnership","inputs":[
+			{"name":"name","type":"string"},
+			{"name":"buyer","type":"address"},
+			{"name":"durationInMomentums","type":"uint64"},
+			{"name":"hashType","type":"uint8"},
+			{"name":"hashLock","type":"bytes"}
+		]},
+		{"type":"function","name":"TakeOwnership","inputs":[
+			{"name":"name","type":"string"},
+			{"name":"preimage","type":"bytes"}
+		]},
+		{"type":"function","name":"ReleaseOwnershipLock","inputs":[
+			{"name":"name","type":"string"}
+		]},
 
 		{"type":"variable","name":"pillarInfo","inputs":[
 			{"name":"name","type":"string"},
@@ -76,6 +90,13 @@ const (
 			{"name":"producedBlockNum","type":"int32"},
 			{"name":"expectedBlockNum","type":"int32"},
 			{"name":"weight","type":"uint256"}
+		]},
+		{"type":"variable","name":"pillarOwnershipLock","inputs":[
+			{"name":"name","type":"string"},
+			{"name":"buyer","type":"address"},
+			{"name":"expirationHeight","type":"uint64"},
+			{"name":"hashType","type":"uint8"},
+			{"name":"hashLock","type":"bytes"}
 		]}
 	]`
 
@@ -101,11 +122,16 @@ const (
 	// delegation.
 	UndelegateMethodName = "Undelegate"
 
+	LockOwnershipMethodName        = "LockOwnership"
+	TakeOwnershipMethodName        = "TakeOwnership"
+	ReleaseOwnershipLockMethodName = "ReleaseOwnershipLock"
+
 	pillarInfoVariableName          = "pillarInfo"
 	producingPillarNameVariableName = "producingPillarName"
 	legacyPillarEntryVariableName   = "LegacyPillarEntry"
 	delegationInfoVariableName      = "delegationInfo"
 	pillarEpochHistoryVariableName  = "pillarEpochHistory"
+	pillarOwnershipLockVariableName = "pillarOwnershipLock"
 )
 
 var (
@@ -117,6 +143,7 @@ var (
 	legacyPillarEntryKeyPrefix   = []byte{3}
 	delegationInfoKeyPrefix      = []byte{4}
 	pillarEpochHistoryKeyPrefix  = []byte{5}
+	pillarOwnershipLockKeyPrefix = []byte{6}
 
 	// AnyPillarType matches every pillar type when filtering with
 	// GetPillarsList.
@@ -670,4 +697,73 @@ func (g *PillarEpochHistory) UnmarshalJSON(data []byte) error {
 	g.ExpectedBlockNum = aux.ExpectedBlockNum
 	g.Weight = common.StringToBigInt(aux.Weight)
 	return nil
+}
+
+type LockOwnershipParam struct {
+	Name                string
+	Buyer               types.Address
+	DurationInMomentums uint64
+	HashType            uint8
+	HashLock            []byte
+}
+
+type TakeOwnershipParam struct {
+	Name     string
+	Preimage []byte
+}
+
+type PillarOwnershipLock struct {
+	Name             string        `json:"name"`
+	Buyer            types.Address `json:"buyer"`
+	ExpirationHeight uint64        `json:"expirationHeight"`
+	HashType         uint8         `json:"hashType"`
+	HashLock         []byte        `json:"hashLock"`
+}
+
+func (lock *PillarOwnershipLock) Save(context db.DB) error {
+	data, err := ABIPillars.PackVariable(
+		pillarOwnershipLockVariableName,
+		lock.Name,
+		lock.Buyer,
+		lock.ExpirationHeight,
+		lock.HashType,
+		lock.HashLock,
+	)
+	if err != nil {
+		return err
+	}
+	return context.Put(GetPillarOwnershipLockKey(lock.Name), data)
+}
+func (lock *PillarOwnershipLock) Delete(context db.DB) error {
+	return context.Delete(GetPillarOwnershipLockKey(lock.Name))
+}
+
+func GetPillarOwnershipLockKey(name string) []byte {
+	return common.JoinBytes(pillarOwnershipLockKeyPrefix, types.NewHash([]byte(name)).Bytes())
+}
+func parsePillarOwnershipLock(data []byte) (*PillarOwnershipLock, error) {
+	if len(data) > 0 {
+		lock := new(PillarOwnershipLock)
+		if err := ABIPillars.UnpackVariable(lock, pillarOwnershipLockVariableName, data); err != nil {
+			return nil, err
+		}
+		digestSize, ok := HashTypeDigestSizes[lock.HashType]
+		if !ok || len(lock.HashLock) != int(digestSize) {
+			return nil, errors.Errorf("invalid pillar ownership lock! Bad hash lock")
+		}
+		if lock.Buyer == types.ZeroAddress {
+			return nil, errors.Errorf("invalid pillar ownership lock! Zero buyer")
+		}
+		return lock, nil
+	} else {
+		return nil, constants.ErrDataNonExistent
+	}
+}
+func GetPillarOwnershipLock(context db.DB, name string) (*PillarOwnershipLock, error) {
+	key := GetPillarOwnershipLockKey(name)
+	if data, err := context.Get(key); err != nil {
+		return nil, err
+	} else {
+		return parsePillarOwnershipLock(data)
+	}
 }

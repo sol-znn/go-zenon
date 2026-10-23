@@ -95,6 +95,8 @@ var (
 	// revoked.
 	ErrNotActive = errors.New("pillar is not active")
 
+	ErrPillarOwnershipLocked = errors.New("pillar ownership is locked")
+
 	// ErrIDNotUnique rejects a token issuance whose derived token
 	// standard collides with an existing token.
 	ErrIDNotUnique = errors.New("there is another token with the same id")

@@ -391,6 +391,25 @@ func (a *PillarApi) GetByName(name string) (*PillarInfo, error) {
 	return nil, nil
 }
 
+func (a *PillarApi) GetOwnershipLock(name string) (*definition.PillarOwnershipLock, error) {
+	frontier, context, err := api.GetFrontierContext(a.chain, types.PillarContract)
+	if err != nil {
+		return nil, err
+	}
+
+	lock, err := definition.GetPillarOwnershipLock(context.Storage(), name)
+	if err == constants.ErrDataNonExistent {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if frontier.Height >= lock.ExpirationHeight {
+		return nil, nil
+	}
+	return lock, nil
+}
+
 // CheckNameAvailability reports whether name can still be used to
 // register a pillar. Unlike GetAll, the check runs against every
 // pillar record in contract state, including revoked ones, so a revoked

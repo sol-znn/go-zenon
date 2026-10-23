@@ -1,6 +1,7 @@
 package implementation
 
 import (
+	"bytes"
 	"encoding/base64"
 	"math/big"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/zenon-network/go-zenon/chain/nom"
 	"github.com/zenon-network/go-zenon/common"
+	"github.com/zenon-network/go-zenon/common/crypto"
 	"github.com/zenon-network/go-zenon/common/types"
 	"github.com/zenon-network/go-zenon/consensus/api"
 	"github.com/zenon-network/go-zenon/vm/constants"
@@ -329,8 +331,18 @@ func (p *LegacyRegisterMethod) ReceiveBlock(context vm_context.AccountVmContext,
 // Revocation is only possible inside the periodic revoke window —
 // see PillarGetRevokeStatus — and is permanent: the name stays
 // registered and can never be reused.
+func hasLivePillarOwnershipLock(context vm_context.AccountVmContext, name string, momentum *nom.Momentum) bool {
+	lock, err := definition.GetPillarOwnershipLock(context.Storage(), name)
+	if err == constants.ErrDataNonExistent {
+		return false
+	}
+	common.DealWithErr(err)
+	return momentum.Height < lock.ExpirationHeight
+}
+
 type RevokeMethod struct {
-	MethodName string
+	MethodName         string
+	CheckOwnershipLock bool
 }
 
 // GetPlasma quotes the EmbeddedWWithdraw tier, covering the one
@@ -393,6 +405,9 @@ func (p *RevokeMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlo
 	common.DealWithErr(err)
 	if status, _ := PillarGetRevokeStatus(pillar, momentum); !status {
 		return nil, constants.RevokeNotDue
+	}
+	if p.CheckOwnershipLock && hasLivePillarOwnershipLock(context, *name, momentum) {
+		return nil, constants.ErrPillarOwnershipLocked
 	}
 
 	pillar.RevokeTime = momentum.Timestamp.Unix()
@@ -890,5 +905,215 @@ func (p *UpdateEmbeddedPillarMethod) ReceiveBlock(context vm_context.AccountVmCo
 	if err := updatePillarRewards(context); err != nil {
 		return nil, err
 	}
+	return nil, nil
+}
+
+type LockOwnershipMethod struct {
+	MethodName string
+}
+
+func (p *LockOwnershipMethod) GetPlasma(plasmaTable *constants.PlasmaTable) (uint64, error) {
+	return plasmaTable.EmbeddedSimple, nil
+}
+func (p *LockOwnershipMethod) ValidateSendBlock(block *nom.AccountBlock) error {
+	var err error
+	param := new(definition.LockOwnershipParam)
+
+	if err := definition.ABIPillars.UnpackMethod(param, p.MethodName, block.Data); err != nil {
+		return constants.ErrUnpackError
+	}
+
+	if err := checkPillarNameStatic(param.Name); err != nil {
+		return err
+	}
+	if block.Amount.Sign() != 0 {
+		return constants.ErrInvalidTokenOrAmount
+	}
+	if err := checkHtlc(definition.CreateHtlcParam{HashType: param.HashType, HashLock: param.HashLock}); err != nil {
+		return err
+	}
+	if param.Buyer == types.ZeroAddress {
+		return constants.ErrForbiddenParam
+	}
+	if types.IsEmbeddedAddress(param.Buyer) {
+		return constants.ErrPermissionDenied
+	}
+	if param.DurationInMomentums < constants.PillarLockMinDuration || param.DurationInMomentums > constants.PillarLockMaxDuration {
+		return constants.ErrInvalidExpirationTime
+	}
+
+	block.Data, err = definition.ABIPillars.PackMethod(p.MethodName, param.Name, param.Buyer, param.DurationInMomentums, param.HashType, param.HashLock)
+	return err
+}
+func (p *LockOwnershipMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := p.ValidateSendBlock(sendBlock); err != nil {
+		return nil, err
+	}
+
+	param := new(definition.LockOwnershipParam)
+	err := definition.ABIPillars.UnpackMethod(param, p.MethodName, sendBlock.Data)
+	common.DealWithErr(err)
+
+	pillar, err := definition.GetPillarInfo(context.Storage(), param.Name)
+	if err == constants.ErrDataNonExistent {
+		return nil, err
+	} else {
+		common.DealWithErr(err)
+	}
+	if !pillar.IsActive() {
+		return nil, constants.ErrNotActive
+	}
+	if pillar.StakeAddress != sendBlock.Address {
+		return nil, constants.ErrPermissionDenied
+	}
+	if param.Buyer == pillar.StakeAddress {
+		return nil, constants.ErrForbiddenParam
+	}
+
+	momentum, err := context.GetFrontierMomentum()
+	common.DealWithErr(err)
+	if hasLivePillarOwnershipLock(context, param.Name, momentum) {
+		return nil, constants.ErrPillarOwnershipLocked
+	}
+
+	lock := &definition.PillarOwnershipLock{
+		Name:             param.Name,
+		Buyer:            param.Buyer,
+		ExpirationHeight: momentum.Height + param.DurationInMomentums,
+		HashType:         param.HashType,
+		HashLock:         param.HashLock,
+	}
+	common.DealWithErr(lock.Save(context.Storage()))
+	pillarLog.Debug("locked pillar ownership", "pillar-name", lock.Name, "owner", sendBlock.Address, "buyer", lock.Buyer, "height", momentum.Height, "expiration-height", lock.ExpirationHeight)
+	return nil, nil
+}
+
+type TakeOwnershipMethod struct {
+	MethodName string
+}
+
+func (p *TakeOwnershipMethod) GetPlasma(plasmaTable *constants.PlasmaTable) (uint64, error) {
+	return plasmaTable.EmbeddedSimple, nil
+}
+func (p *TakeOwnershipMethod) ValidateSendBlock(block *nom.AccountBlock) error {
+	var err error
+	param := new(definition.TakeOwnershipParam)
+
+	if err := definition.ABIPillars.UnpackMethod(param, p.MethodName, block.Data); err != nil {
+		return constants.ErrUnpackError
+	}
+
+	if err := checkPillarNameStatic(param.Name); err != nil {
+		return err
+	}
+	if block.Amount.Sign() != 0 {
+		return constants.ErrInvalidTokenOrAmount
+	}
+	if len(param.Preimage) > constants.PillarLockPreimageMaxSize {
+		return constants.ErrInvalidPreimage
+	}
+
+	block.Data, err = definition.ABIPillars.PackMethod(p.MethodName, param.Name, param.Preimage)
+	return err
+}
+func (p *TakeOwnershipMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := p.ValidateSendBlock(sendBlock); err != nil {
+		return nil, err
+	}
+
+	param := new(definition.TakeOwnershipParam)
+	err := definition.ABIPillars.UnpackMethod(param, p.MethodName, sendBlock.Data)
+	common.DealWithErr(err)
+
+	pillar, err := definition.GetPillarInfo(context.Storage(), param.Name)
+	if err == constants.ErrDataNonExistent {
+		return nil, err
+	} else {
+		common.DealWithErr(err)
+	}
+	if !pillar.IsActive() {
+		return nil, constants.ErrNotActive
+	}
+
+	lock, err := definition.GetPillarOwnershipLock(context.Storage(), param.Name)
+	if err == constants.ErrDataNonExistent {
+		return nil, err
+	} else {
+		common.DealWithErr(err)
+	}
+
+	momentum, err := context.GetFrontierMomentum()
+	common.DealWithErr(err)
+	if momentum.Height >= lock.ExpirationHeight {
+		return nil, constants.ErrExpired
+	}
+	if lock.Buyer != sendBlock.Address {
+		return nil, constants.ErrPermissionDenied
+	}
+
+	var hashedPreimage []byte
+	if lock.HashType == definition.HashTypeSHA3 {
+		hashedPreimage = crypto.Hash(param.Preimage)
+	} else {
+		hashedPreimage = crypto.HashSHA256(param.Preimage)
+	}
+	if !bytes.Equal(hashedPreimage, lock.HashLock) {
+		return nil, constants.ErrInvalidPreimage
+	}
+
+	previousOwner := pillar.StakeAddress
+	pillar.StakeAddress = sendBlock.Address
+	common.DealWithErr(pillar.Save(context.Storage()))
+	common.DealWithErr(lock.Delete(context.Storage()))
+	pillarLog.Debug("took pillar ownership", "pillar-name", pillar.Name, "previous-owner", previousOwner, "owner", pillar.StakeAddress, "height", momentum.Height)
+	return nil, nil
+}
+
+type ReleaseOwnershipLockMethod struct {
+	MethodName string
+}
+
+func (p *ReleaseOwnershipLockMethod) GetPlasma(plasmaTable *constants.PlasmaTable) (uint64, error) {
+	return plasmaTable.EmbeddedSimple, nil
+}
+func (p *ReleaseOwnershipLockMethod) ValidateSendBlock(block *nom.AccountBlock) error {
+	var err error
+	param := new(string)
+
+	if err := definition.ABIPillars.UnpackMethod(param, p.MethodName, block.Data); err != nil {
+		return constants.ErrUnpackError
+	}
+
+	if err := checkPillarNameStatic(*param); err != nil {
+		return err
+	}
+	if block.Amount.Sign() != 0 {
+		return constants.ErrInvalidTokenOrAmount
+	}
+
+	block.Data, err = definition.ABIPillars.PackMethod(p.MethodName, param)
+	return err
+}
+func (p *ReleaseOwnershipLockMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := p.ValidateSendBlock(sendBlock); err != nil {
+		return nil, err
+	}
+
+	name := new(string)
+	err := definition.ABIPillars.UnpackMethod(name, p.MethodName, sendBlock.Data)
+	common.DealWithErr(err)
+
+	lock, err := definition.GetPillarOwnershipLock(context.Storage(), *name)
+	if err == constants.ErrDataNonExistent {
+		return nil, err
+	} else {
+		common.DealWithErr(err)
+	}
+	if lock.Buyer != sendBlock.Address {
+		return nil, constants.ErrPermissionDenied
+	}
+
+	common.DealWithErr(lock.Delete(context.Storage()))
+	pillarLog.Debug("released pillar ownership lock", "pillar-name", lock.Name, "buyer", lock.Buyer)
 	return nil, nil
 }

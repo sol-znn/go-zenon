@@ -113,6 +113,10 @@ var (
 	// bytes.
 	PillarNameLengthMax = 40
 
+	PillarLockMinDuration     = uint64(2 * MomentumsPerHour)
+	PillarLockMaxDuration     = uint64(48 * MomentumsPerHour)
+	PillarLockPreimageMaxSize = 32
+
 	/// === Sentinel constants ===
 
 	// SentinelZnnRegisterAmount is the ZNN amount (5,000 ZNN, in

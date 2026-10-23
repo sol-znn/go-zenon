@@ -150,6 +150,13 @@ func applyAcceleratorDiffs(contracts map[types.Address]*embeddedImplementation) 
 	contracts[types.LiquidityContract].m[cabi.BurnZnnMethodName] = &implementation.BurnZnnMethod{MethodName: cabi.BurnZnnMethodName}
 }
 
+func applyPillarOwnershipDiffs(contracts map[types.Address]*embeddedImplementation) {
+	contracts[types.PillarContract].m[cabi.RevokeMethodName] = &implementation.RevokeMethod{MethodName: cabi.RevokeMethodName, CheckOwnershipLock: true}
+	contracts[types.PillarContract].m[cabi.LockOwnershipMethodName] = &implementation.LockOwnershipMethod{MethodName: cabi.LockOwnershipMethodName}
+	contracts[types.PillarContract].m[cabi.TakeOwnershipMethodName] = &implementation.TakeOwnershipMethod{MethodName: cabi.TakeOwnershipMethodName}
+	contracts[types.PillarContract].m[cabi.ReleaseOwnershipLockMethodName] = &implementation.ReleaseOwnershipLockMethod{MethodName: cabi.ReleaseOwnershipLockMethodName}
+}
+
 func getOrigin() map[types.Address]*embeddedImplementation {
 	return map[types.Address]*embeddedImplementation{
 		types.PlasmaContract: {
@@ -245,6 +252,7 @@ const (
 	htlcSporkBit
 	dynamicPlasmaSporkBit
 	ptlcSporkBit
+	pillarOwnershipSporkBit
 
 	embeddedVariantCombinations
 )
@@ -255,7 +263,7 @@ var (
 )
 
 // buildEmbeddedVariants precomputes the merged contract map for every
-// combination of the 5 sporks GetEmbeddedMethod consults, so a call
+// combination of the 6 sporks GetEmbeddedMethod consults, so a call
 // only ever does an array lookup rather than rebuilding the map (10
 // contracts, ~60 method structs) from scratch every time. Runs once,
 // lazily, guarded by embeddedVariantsOnce.
@@ -276,6 +284,9 @@ func buildEmbeddedVariants() {
 		}
 		if key&ptlcSporkBit != 0 {
 			applyPtlcDiffs(contractsMap)
+		}
+		if key&pillarOwnershipSporkBit != 0 {
+			applyPillarOwnershipDiffs(contractsMap)
 		}
 		embeddedVariants[key] = contractsMap
 	}
@@ -304,6 +315,9 @@ func sporkVariantKey(context vm_context.AccountVmContext) int {
 	}
 	if context.IsPtlcSporkEnforced() {
 		key |= ptlcSporkBit
+	}
+	if context.IsPillarOwnershipSporkEnforced() {
+		key |= pillarOwnershipSporkBit
 	}
 	// No change for NoPillarRegSpork
 	return key

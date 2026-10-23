@@ -34,3 +34,9 @@ func (ctx *accountVmContext) IsPtlcSporkEnforced() bool {
 	common.DealWithErr(err)
 	return active
 }
+
+func (ctx *accountVmContext) IsPillarOwnershipSporkEnforced() bool {
+	active, err := ctx.cacheStore.IsSporkActive(types.PillarOwnershipSpork)
+	common.DealWithErr(err)
+	return active
+}

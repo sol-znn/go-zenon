@@ -8,6 +8,9 @@ import (
 
 	"github.com/zenon-network/go-zenon/common"
 	"github.com/zenon-network/go-zenon/common/types"
+	"github.com/zenon-network/go-zenon/vm/constants"
+	cabi "github.com/zenon-network/go-zenon/vm/embedded/definition"
+	"github.com/zenon-network/go-zenon/vm/embedded/implementation"
 )
 
 // getAllEmbedded returns the fully merged contract map with all spork
@@ -20,6 +23,7 @@ func getAllEmbedded() map[types.Address]*embeddedImplementation {
 	applyHtlcDiffs(contractsMap)
 	applyDynamicPlasmaDiffs(contractsMap)
 	applyPtlcDiffs(contractsMap)
+	applyPillarOwnershipDiffs(contractsMap)
 	return contractsMap
 }
 
@@ -101,9 +105,12 @@ func TestDumpContractsABIMethods(t *testing.T) {
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"CollectReward", "id":"af43d3f0", "signature":"CollectReward()"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"Delegate", "id":"7c2d5d6e", "signature":"Delegate(string)"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"DepositQsr", "id":"d49577f4", "signature":"DepositQsr()"}
+{"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"LockOwnership", "id":"7e165bb8", "signature":"LockOwnership(string,address,uint64,uint8,bytes)"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"Register", "id":"644de927", "signature":"Register(string,address,address,uint8,uint8)"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"RegisterLegacy", "id":"e4588207", "signature":"RegisterLegacy(string,address,address,uint8,uint8,string,string)"}
+{"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"ReleaseOwnershipLock", "id":"eb711371", "signature":"ReleaseOwnershipLock(string)"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"Revoke", "id":"95631306", "signature":"Revoke(string)"}
+{"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"TakeOwnership", "id":"c6eecd74", "signature":"TakeOwnership(string,bytes)"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"Undelegate", "id":"7e8952c8", "signature":"Undelegate()"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"Update", "id":"20093ea6", "signature":"Update()"}
 {"address":"z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg", "name":"UpdatePillar", "id":"de0ae34b", "signature":"UpdatePillar(string,address,address,uint8,uint8)"}
@@ -126,4 +133,77 @@ func TestDumpContractsABIMethods(t *testing.T) {
 {"address":"z1qxemdeddedxt0kenxxxxxxxxxxxxxxxxh9amk0", "name":"Mint", "id":"cd70f9bc", "signature":"Mint(tokenStandard,uint256,address)"}
 {"address":"z1qxemdeddedxt0kenxxxxxxxxxxxxxxxxh9amk0", "name":"UpdateToken", "id":"2a3cf32c", "signature":"UpdateToken(tokenStandard,address,bool,bool)"}
 ]`)
+}
+
+func TestEmbeddedVariantsPlasma(t *testing.T) {
+	embeddedVariantsOnce.Do(buildEmbeddedVariants)
+	common.Expect(t, embeddedVariantCombinations, 64)
+
+	plasmaDependsOn := map[string]int{
+		types.PillarContract.String() + "." + cabi.CollectRewardMethodName:   acceleratorSporkBit,
+		types.SentinelContract.String() + "." + cabi.CollectRewardMethodName: acceleratorSporkBit,
+		types.StakeContract.String() + "." + cabi.CollectRewardMethodName:    acceleratorSporkBit,
+	}
+
+	charged := make(map[string]map[int]uint64)
+	for key := 0; key < embeddedVariantCombinations; key++ {
+		for address, contract := range embeddedVariants[key] {
+			for name, method := range contract.m {
+				plasma, err := method.GetPlasma(&constants.AlphanetPlasmaTable)
+				common.FailIfErr(t, err)
+
+				id := address.String() + "." + name
+				if charged[id] == nil {
+					charged[id] = make(map[int]uint64)
+				}
+				masked := key & plasmaDependsOn[id]
+				if previous, ok := charged[id][masked]; ok && previous != plasma {
+					t.Fatalf("plasma for %v changes with a spork it must not depend on. Variant %v charges %v, another charges %v", id, key, plasma, previous)
+				}
+				charged[id][masked] = plasma
+			}
+		}
+	}
+
+	simple := constants.AlphanetPlasmaTable.EmbeddedSimple
+	withWithdraw := simple + constants.AlphanetPlasmaTable.EmbeddedWWithdraw
+	for key := 0; key < embeddedVariantCombinations; key++ {
+		plasma, err := embeddedVariants[key][types.PillarContract].m[cabi.CollectRewardMethodName].GetPlasma(&constants.AlphanetPlasmaTable)
+		common.FailIfErr(t, err)
+		if key&acceleratorSporkBit != 0 {
+			common.ExpectUint64(t, plasma, simple)
+		} else {
+			common.ExpectUint64(t, plasma, withWithdraw)
+		}
+	}
+}
+
+func TestEmbeddedVariantsPillarOwnership(t *testing.T) {
+	embeddedVariantsOnce.Do(buildEmbeddedVariants)
+
+	added := []string{cabi.LockOwnershipMethodName, cabi.TakeOwnershipMethodName, cabi.ReleaseOwnershipLockMethodName}
+	baseline := len(getOrigin()[types.PillarContract].m)
+	for key := 0; key < embeddedVariantCombinations; key++ {
+		enforced := key&pillarOwnershipSporkBit != 0
+		pillar := embeddedVariants[key][types.PillarContract]
+
+		revoke, ok := pillar.m[cabi.RevokeMethodName].(*implementation.RevokeMethod)
+		common.ExpectTrue(t, ok)
+		common.ExpectTrue(t, revoke.CheckOwnershipLock == enforced)
+
+		for _, name := range added {
+			method, found := pillar.m[name]
+			common.ExpectTrue(t, found == enforced)
+			if found {
+				plasma, err := method.GetPlasma(&constants.AlphanetPlasmaTable)
+				common.FailIfErr(t, err)
+				common.ExpectUint64(t, plasma, constants.AlphanetPlasmaTable.EmbeddedSimple)
+			}
+		}
+		if enforced {
+			common.Expect(t, len(pillar.m), baseline+len(added))
+		} else {
+			common.Expect(t, len(pillar.m), baseline)
+		}
+	}
 }

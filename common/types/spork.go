@@ -46,6 +46,8 @@ var (
 	// to version 2 with adaptive fusion/work prices.
 	DynamicPlasmaSpork = NewImplementedSpork("0000000000000000000000000000000000000000000000000000000000000002")
 
+	PillarOwnershipSpork = NewImplementedSpork("0000000000000000000000000000000000000000000000000000000000000003")
+
 	// ImplementedSporksMap is the set of spork IDs this build knows
 	// how to enforce. After every momentum insertion the momentum pool
 	// checks each activated spork that has reached its enforcement
@@ -58,6 +60,7 @@ var (
 		BridgeAndLiquiditySpork.SporkId: true,
 		Libp2pSpork.SporkId:             true,
 		DynamicPlasmaSpork.SporkId:      true,
+		PillarOwnershipSpork.SporkId:    true,
 	}
 )
 
