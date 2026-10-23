@@ -72,11 +72,38 @@ func (method *UpdateEmbeddedLiquidityMethod) ReceiveBlock(context vm_context.Acc
 		return nil, err
 	}
 
-	return updateLiquidityRewards(context)
+	return updateLiquidityRewards(context, nil)
 }
 
-func computeLiquidityRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64) ([]*nom.AccountBlock, error) {
+type UpdateSharedEmbeddedLiquidityMethod struct {
+	UpdateEmbeddedLiquidityMethod
+}
+
+func (method *UpdateSharedEmbeddedLiquidityMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := method.ValidateSendBlock(sendBlock); err != nil {
+		liquidityLog.Debug("invalid update - syntactic validation failed", "address", sendBlock.Address, "reason", err)
+		return nil, err
+	}
+
+	if err := checkAndPerformUpdate(context); err != nil {
+		liquidityLog.Debug("invalid update - cannot perform update", "address", sendBlock.Address, "reason", err)
+		return nil, err
+	}
+
+	share := newAcceleratorShare()
+	blocks, err := updateLiquidityRewards(context, share)
+	if err != nil {
+		return nil, err
+	}
+	return append(blocks, share.mintBlocks()...), nil
+}
+
+func computeLiquidityRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64, share *acceleratorShare) ([]*nom.AccountBlock, error) {
 	totalZnnAmount, totalQsrAmount := constants.LiquidityRewardForEpoch(epoch)
+	if share.appliesTo(context, epoch) {
+		totalZnnAmount = share.takeZnn(totalZnnAmount)
+		totalQsrAmount = share.takeQsr(totalQsrAmount)
+	}
 
 	liquidityLog.Debug("updating liquidity reward", "epoch", epoch, "znn-amount", totalZnnAmount, "qsr-amount", totalQsrAmount)
 
@@ -105,7 +132,7 @@ func computeLiquidityRewardsForEpoch(context vm_context.AccountVmContext, epoch 
 	}, nil
 }
 
-func updateLiquidityRewards(context vm_context.AccountVmContext) ([]*nom.AccountBlock, error) {
+func updateLiquidityRewards(context vm_context.AccountVmContext, share *acceleratorShare) ([]*nom.AccountBlock, error) {
 	lastEpoch, err := definition.GetLastEpochUpdate(context.Storage())
 	if err != nil {
 		return nil, err
@@ -121,7 +148,7 @@ func updateLiquidityRewards(context vm_context.AccountVmContext) ([]*nom.Account
 			liquidityLog.Error("unknown panic", "reason", err)
 			return nil, err
 		}
-		if blocks, err := computeLiquidityRewardsForEpoch(context, uint64(lastEpoch.LastEpoch)); err != nil {
+		if blocks, err := computeLiquidityRewardsForEpoch(context, uint64(lastEpoch.LastEpoch), share); err != nil {
 			return nil, err
 		} else {
 			result = append(result, blocks...)
@@ -694,7 +721,30 @@ func (method *UpdateRewardEmbeddedLiquidityMethod) ReceiveBlock(context vm_conte
 		return nil, err
 	}
 
-	return updateLiquidityStakeRewards(context)
+	return updateLiquidityStakeRewards(context, nil)
+}
+
+type UpdateSharedRewardEmbeddedLiquidityMethod struct {
+	UpdateRewardEmbeddedLiquidityMethod
+}
+
+func (method *UpdateSharedRewardEmbeddedLiquidityMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := method.ValidateSendBlock(sendBlock); err != nil {
+		liquidityLog.Debug("invalid update - syntactic validation failed", "address", sendBlock.Address, "reason", err)
+		return nil, err
+	}
+
+	if err := checkAndPerformUpdate(context); err != nil {
+		liquidityLog.Debug("invalid update - cannot perform update", "address", sendBlock.Address, "reason", err)
+		return nil, err
+	}
+
+	share := newAcceleratorShare()
+	blocks, err := updateLiquidityStakeRewards(context, share)
+	if err != nil {
+		return nil, err
+	}
+	return append(blocks, share.mintBlocks()...), nil
 }
 
 // weighted liquidity stake amount over time
@@ -713,12 +763,16 @@ func getWeightedLiquidityStake(info *definition.LiquidityStakeEntry, startTime, 
 	return cumulatedStake
 }
 
-func computeLiquidityStakeRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64) ([]*nom.AccountBlock, error) {
+func computeLiquidityStakeRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64, share *acceleratorShare) ([]*nom.AccountBlock, error) {
 	liquidityInfo, err := definition.GetLiquidityInfo(context.Storage())
 	if err != nil {
 		return nil, err
 	}
 	totalZnnAmount, totalQsrAmount := constants.LiquidityRewardForEpoch(epoch)
+	if share.appliesTo(context, epoch) {
+		totalZnnAmount = share.takeZnn(totalZnnAmount)
+		totalQsrAmount = share.takeQsr(totalQsrAmount)
+	}
 	if liquidityInfo.IsHalted {
 		// return blocks that issue tokens to liquidity embedded
 		return []*nom.AccountBlock{
@@ -893,7 +947,7 @@ func computeLiquidityStakeRewardsForEpoch(context vm_context.AccountVmContext, e
 	return blocks, nil
 }
 
-func updateLiquidityStakeRewards(context vm_context.AccountVmContext) ([]*nom.AccountBlock, error) {
+func updateLiquidityStakeRewards(context vm_context.AccountVmContext, share *acceleratorShare) ([]*nom.AccountBlock, error) {
 	lastEpoch, err := definition.GetLastEpochUpdate(context.Storage())
 	if err != nil {
 		return nil, err
@@ -908,7 +962,7 @@ func updateLiquidityStakeRewards(context vm_context.AccountVmContext) ([]*nom.Ac
 		liquidityLog.Error("unknown panic", "reason", err)
 		return nil, err
 	}
-	if blocks, err := computeLiquidityStakeRewardsForEpoch(context, uint64(lastEpoch.LastEpoch)); err != nil {
+	if blocks, err := computeLiquidityStakeRewardsForEpoch(context, uint64(lastEpoch.LastEpoch), share); err != nil {
 		return nil, err
 	} else if blocks != nil {
 		result = append(result, blocks...)

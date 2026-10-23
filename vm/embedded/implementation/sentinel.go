@@ -233,8 +233,30 @@ func (method *UpdateEmbeddedSentinelMethod) ReceiveBlock(context vm_context.Acco
 	}
 
 	// Update epochRewards
-	err := updateSentinelRewards(context)
+	err := updateSentinelRewards(context, nil)
 	return nil, err
+}
+
+type UpdateSharedEmbeddedSentinelMethod struct {
+	UpdateEmbeddedSentinelMethod
+}
+
+func (method *UpdateSharedEmbeddedSentinelMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := method.ValidateSendBlock(sendBlock); err != nil {
+		sentinelLog.Debug("invalid update - syntactic validation failed", "address", sendBlock.Address, "reason", err)
+		return nil, err
+	}
+
+	if err := checkAndPerformUpdate(context); err != nil {
+		sentinelLog.Debug("invalid update - cannot perform update", "address", sendBlock.Address, "reason", err)
+		return nil, err
+	}
+
+	share := newAcceleratorShare()
+	if err := updateSentinelRewards(context, share); err != nil {
+		return nil, err
+	}
+	return share.mintBlocks(), nil
 }
 
 // returns 0/1 depending on whenever the sentinel has a 90% percent uptime
@@ -253,7 +275,7 @@ func getWeightedSentinel(info *definition.SentinelInfo, startTime, endTime int64
 	}
 	return common.Big0
 }
-func computeSentinelRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64) error {
+func computeSentinelRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64, share *acceleratorShare) error {
 	startTime, endTime := context.EpochTicker().ToTime(epoch)
 
 	cumulatedSentinel := big.NewInt(0)
@@ -271,6 +293,11 @@ func computeSentinelRewardsForEpoch(context vm_context.AccountVmContext, epoch u
 	sentinelLog.Debug("updating sentinel reward", "epoch", epoch, "total-znn-reward", totalZnnAmount, "total-qsr-reward", totalQsrAmount, "cumulated-sentinel", cumulatedSentinel, "start-time", startTime.Unix(), "end-time", endTime.Unix())
 	if cumulatedSentinel.Sign() == 0 {
 		return nil
+	}
+
+	if share.appliesTo(context, epoch) {
+		totalZnnAmount = share.takeZnn(totalZnnAmount)
+		totalQsrAmount = share.takeQsr(totalQsrAmount)
 	}
 
 	err = definition.IterateSentinelEntries(context.Storage(), func(sentinelInfo *definition.SentinelInfo) error {
@@ -302,7 +329,7 @@ func computeSentinelRewardsForEpoch(context vm_context.AccountVmContext, epoch u
 	return nil
 }
 
-func updateSentinelRewards(context vm_context.AccountVmContext) error {
+func updateSentinelRewards(context vm_context.AccountVmContext, share *acceleratorShare) error {
 	lastEpoch, err := definition.GetLastEpochUpdate(context.Storage())
 	if err != nil {
 		return err
@@ -316,7 +343,7 @@ func updateSentinelRewards(context vm_context.AccountVmContext) error {
 			sentinelLog.Error("unknown panic", "reason", err)
 			return err
 		}
-		if err := computeSentinelRewardsForEpoch(context, uint64(lastEpoch.LastEpoch)); err != nil {
+		if err := computeSentinelRewardsForEpoch(context, uint64(lastEpoch.LastEpoch), share); err != nil {
 			return err
 		}
 	}

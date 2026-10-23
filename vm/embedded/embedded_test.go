@@ -20,6 +20,7 @@ func getAllEmbedded() map[types.Address]*embeddedImplementation {
 	applyHtlcDiffs(contractsMap)
 	applyDynamicPlasmaDiffs(contractsMap)
 	applyPtlcDiffs(contractsMap)
+	applyAcceleratorShareDiffs(contractsMap)
 	return contractsMap
 }
 

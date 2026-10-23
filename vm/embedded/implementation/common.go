@@ -112,6 +112,84 @@ func checkAndPerformUpdateEpoch(context vm_context.AccountVmContext, epoch *defi
 	return epoch.Save(context.Storage())
 }
 
+type acceleratorShare struct {
+	Znn *big.Int
+	Qsr *big.Int
+}
+
+func newAcceleratorShare() *acceleratorShare {
+	return &acceleratorShare{Znn: big.NewInt(0), Qsr: big.NewInt(0)}
+}
+
+func (share *acceleratorShare) appliesTo(context vm_context.AccountVmContext, epoch uint64) bool {
+	return share != nil && shareAppliesTo(context, epoch)
+}
+
+func (share *acceleratorShare) takeZnn(amount *big.Int) *big.Int {
+	part, rest := constants.AcceleratorShareOf(amount)
+	share.Znn.Add(share.Znn, part)
+	return rest
+}
+
+func (share *acceleratorShare) takeQsr(amount *big.Int) *big.Int {
+	part, rest := constants.AcceleratorShareOf(amount)
+	share.Qsr.Add(share.Qsr, part)
+	return rest
+}
+
+func acceleratorShareStartEpoch(context vm_context.AccountVmContext) (uint64, error) {
+	sporks, err := context.MomentumStore().GetAllDefinedSporks()
+	if err != nil {
+		return 0, err
+	}
+	for _, spork := range sporks {
+		if spork.Id != types.AcceleratorShareSpork.SporkId || !spork.Activated {
+			continue
+		}
+		if spork.EnforcementHeight == 0 {
+			return 0, nil
+		}
+		momentum, err := context.MomentumStore().GetMomentumByHeight(spork.EnforcementHeight)
+		if err != nil {
+			return 0, err
+		}
+		if momentum == nil {
+			return 0, constants.ErrDataNonExistent
+		}
+		return context.EpochTicker().ToTick(*momentum.Timestamp) + 1, nil
+	}
+	return 0, constants.ErrDataNonExistent
+}
+
+func shareAppliesTo(context vm_context.AccountVmContext, epoch uint64) bool {
+	if !context.IsAcceleratorShareSporkEnforced() {
+		return false
+	}
+	if IsAcceleratorRunning(context) != nil {
+		return false
+	}
+	startEpoch, err := acceleratorShareStartEpoch(context)
+	common.DealWithErr(err)
+	return epoch >= startEpoch
+}
+
+func (share *acceleratorShare) mintBlocks() []*nom.AccountBlock {
+	blocks := make([]*nom.AccountBlock, 0, 2)
+	for _, mint := range []struct {
+		zts    types.ZenonTokenStandard
+		amount *big.Int
+	}{{types.ZnnTokenStandard, share.Znn}, {types.QsrTokenStandard, share.Qsr}} {
+		if mint.amount.Sign() > 0 {
+			blocks = append(blocks, &nom.AccountBlock{
+				ToAddress: types.TokenContract,
+				Amount:    common.Big0,
+				Data:      definition.ABIToken.PackMethodPanic(definition.MintMethodName, mint.zts, mint.amount, types.AcceleratorContract),
+			})
+		}
+	}
+	return blocks
+}
+
 // CollectRewardMethod is a common embedded.method used to issue tokens to users based on RewardDeposit object.
 // When issuing rewards, the embedded adds the respected value in the RewardDeposit object in the DB and afterwards,
 // the users will call this method to receive the tokens.

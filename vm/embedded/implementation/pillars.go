@@ -422,10 +422,18 @@ type pillarEpochReward struct {
 }
 
 // distributed reward for all pillars in one epoch
-func computeDetailedPillarReward(context vm_context.AccountVmContext, epoch uint64) error {
+func computeDetailedPillarReward(context vm_context.AccountVmContext, epoch uint64, share *acceleratorShare) error {
 	pillarReward, err := computePillarsRewardForEpoch(context, epoch)
 	if err != nil {
 		return err
+	}
+
+	if share.appliesTo(context, epoch) {
+		for _, reward := range pillarReward {
+			reward.BlockReward = share.takeZnn(reward.BlockReward)
+			reward.DelegationReward = share.takeZnn(reward.DelegationReward)
+			reward.TotalReward = new(big.Int).Add(reward.BlockReward, reward.DelegationReward)
+		}
 	}
 
 	toGive := make(map[string]*big.Int)
@@ -605,7 +613,7 @@ func computePillarRewardForEpoch(detail *api.EpochStats, name string) *pillarEpo
 	return reward
 }
 
-func updatePillarRewards(context vm_context.AccountVmContext) error {
+func updatePillarRewards(context vm_context.AccountVmContext, share *acceleratorShare) error {
 	lastEpoch, err := definition.GetLastEpochUpdate(context.Storage())
 	if err != nil {
 		return err
@@ -618,7 +626,7 @@ func updatePillarRewards(context vm_context.AccountVmContext) error {
 			pillarLog.Error("unknown panic", "reason", err)
 			return err
 		}
-		if err := computeDetailedPillarReward(context, uint64(lastEpoch.LastEpoch)); err != nil {
+		if err := computeDetailedPillarReward(context, uint64(lastEpoch.LastEpoch), share); err != nil {
 			return err
 		}
 	}
@@ -887,8 +895,28 @@ func (p *UpdateEmbeddedPillarMethod) ReceiveBlock(context vm_context.AccountVmCo
 		return nil, err
 	}
 
-	if err := updatePillarRewards(context); err != nil {
+	if err := updatePillarRewards(context, nil); err != nil {
 		return nil, err
 	}
 	return nil, nil
+}
+
+type UpdateSharedEmbeddedPillarMethod struct {
+	UpdateEmbeddedPillarMethod
+}
+
+func (p *UpdateSharedEmbeddedPillarMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := p.ValidateSendBlock(sendBlock); err != nil {
+		return nil, err
+	}
+
+	if err := checkAndPerformUpdate(context); err != nil {
+		return nil, err
+	}
+
+	share := newAcceleratorShare()
+	if err := updatePillarRewards(context, share); err != nil {
+		return nil, err
+	}
+	return share.mintBlocks(), nil
 }

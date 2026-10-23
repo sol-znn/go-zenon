@@ -34,3 +34,9 @@ func (ctx *accountVmContext) IsPtlcSporkEnforced() bool {
 	common.DealWithErr(err)
 	return active
 }
+
+func (ctx *accountVmContext) IsAcceleratorShareSporkEnforced() bool {
+	active, err := ctx.cacheStore.IsSporkActive(types.AcceleratorShareSpork)
+	common.DealWithErr(err)
+	return active
+}

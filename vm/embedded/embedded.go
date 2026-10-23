@@ -150,6 +150,18 @@ func applyAcceleratorDiffs(contracts map[types.Address]*embeddedImplementation) 
 	contracts[types.LiquidityContract].m[cabi.BurnZnnMethodName] = &implementation.BurnZnnMethod{MethodName: cabi.BurnZnnMethodName}
 }
 
+func applyAcceleratorShareDiffs(contracts map[types.Address]*embeddedImplementation) {
+	contracts[types.PillarContract].m[cabi.UpdateMethodName] = &implementation.UpdateSharedEmbeddedPillarMethod{UpdateEmbeddedPillarMethod: implementation.UpdateEmbeddedPillarMethod{MethodName: cabi.UpdateMethodName}}
+	contracts[types.SentinelContract].m[cabi.UpdateMethodName] = &implementation.UpdateSharedEmbeddedSentinelMethod{UpdateEmbeddedSentinelMethod: implementation.UpdateEmbeddedSentinelMethod{MethodName: cabi.UpdateMethodName}}
+	contracts[types.StakeContract].m[cabi.UpdateMethodName] = &implementation.UpdateSharedEmbeddedStakeMethod{UpdateEmbeddedStakeMethod: implementation.UpdateEmbeddedStakeMethod{MethodName: cabi.UpdateMethodName}}
+	switch contracts[types.LiquidityContract].m[cabi.UpdateMethodName].(type) {
+	case *implementation.UpdateRewardEmbeddedLiquidityMethod:
+		contracts[types.LiquidityContract].m[cabi.UpdateMethodName] = &implementation.UpdateSharedRewardEmbeddedLiquidityMethod{UpdateRewardEmbeddedLiquidityMethod: implementation.UpdateRewardEmbeddedLiquidityMethod{MethodName: cabi.UpdateMethodName}}
+	case *implementation.UpdateEmbeddedLiquidityMethod:
+		contracts[types.LiquidityContract].m[cabi.UpdateMethodName] = &implementation.UpdateSharedEmbeddedLiquidityMethod{UpdateEmbeddedLiquidityMethod: implementation.UpdateEmbeddedLiquidityMethod{MethodName: cabi.UpdateMethodName}}
+	}
+}
+
 func getOrigin() map[types.Address]*embeddedImplementation {
 	return map[types.Address]*embeddedImplementation{
 		types.PlasmaContract: {
@@ -245,6 +257,7 @@ const (
 	htlcSporkBit
 	dynamicPlasmaSporkBit
 	ptlcSporkBit
+	acceleratorShareSporkBit
 
 	embeddedVariantCombinations
 )
@@ -277,6 +290,9 @@ func buildEmbeddedVariants() {
 		if key&ptlcSporkBit != 0 {
 			applyPtlcDiffs(contractsMap)
 		}
+		if key&acceleratorShareSporkBit != 0 {
+			applyAcceleratorShareDiffs(contractsMap)
+		}
 		embeddedVariants[key] = contractsMap
 	}
 }
@@ -304,6 +320,9 @@ func sporkVariantKey(context vm_context.AccountVmContext) int {
 	}
 	if context.IsPtlcSporkEnforced() {
 		key |= ptlcSporkBit
+	}
+	if context.IsAcceleratorShareSporkEnforced() {
+		key |= acceleratorShareSporkBit
 	}
 	// No change for NoPillarRegSpork
 	return key

@@ -91,6 +91,8 @@ var (
 	// pays at most 20 phases per call.
 	MaxBlocksPerUpdate = 40
 
+	AcceleratorSharePercentage int64 = 5
+
 	/// ==== Pillar constants ===
 
 	// PillarStakeAmount is the ZNN deposit (15,000 ZNN, in smallest
@@ -368,4 +370,11 @@ func LiquidityRewardForEpoch(epoch uint64) (*big.Int, *big.Int) {
 func StakeQsrRewardPerEpoch(epoch uint64) *big.Int {
 	qsr := (NetworkQsrRewardPerEpoch(epoch) * StakingQsrRewardPercentage) / 100
 	return big.NewInt(qsr)
+}
+
+func AcceleratorShareOf(amount *big.Int) (share, rest *big.Int) {
+	share = new(big.Int).Mul(amount, big.NewInt(AcceleratorSharePercentage))
+	share.Quo(share, common.Big100)
+	rest = new(big.Int).Sub(amount, share)
+	return share, rest
 }

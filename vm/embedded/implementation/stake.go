@@ -217,8 +217,28 @@ func (p *UpdateEmbeddedStakeMethod) ReceiveBlock(context vm_context.AccountVmCon
 	}
 
 	// Update epochRewards
-	err := updateStakeRewards(context)
+	err := updateStakeRewards(context, nil)
 	return nil, err
+}
+
+type UpdateSharedEmbeddedStakeMethod struct {
+	UpdateEmbeddedStakeMethod
+}
+
+func (p *UpdateSharedEmbeddedStakeMethod) ReceiveBlock(context vm_context.AccountVmContext, sendBlock *nom.AccountBlock) ([]*nom.AccountBlock, error) {
+	if err := p.ValidateSendBlock(sendBlock); err != nil {
+		return nil, err
+	}
+
+	if err := checkAndPerformUpdate(context); err != nil {
+		return nil, err
+	}
+
+	share := newAcceleratorShare()
+	if err := updateStakeRewards(context, share); err != nil {
+		return nil, err
+	}
+	return share.mintBlocks(), nil
 }
 
 // weighted stake amount over time
@@ -237,7 +257,7 @@ func getWeightedStake(info *definition.StakeInfo, startTime, endTime int64) *big
 	return cumulatedStake
 }
 
-func computeStakeRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64) error {
+func computeStakeRewardsForEpoch(context vm_context.AccountVmContext, epoch uint64, share *acceleratorShare) error {
 	startTime, endTime := context.EpochTicker().ToTime(epoch)
 
 	cumulatedStake := big.NewInt(0)
@@ -254,6 +274,10 @@ func computeStakeRewardsForEpoch(context vm_context.AccountVmContext, epoch uint
 	stakeLog.Debug("updating stake reward", "epoch", epoch, "total-reward", constants.StakeQsrRewardPerEpoch(epoch), "cumulated-stake", cumulatedStake, "start-time", startTime.Unix(), "end-time", endTime.Unix())
 	if cumulatedStake.Sign() == 0 {
 		return nil
+	}
+
+	if share.appliesTo(context, epoch) {
+		totalAmount = share.takeQsr(totalAmount)
 	}
 
 	err = definition.IterateStakeEntries(context.Storage(), func(stakeInfo *definition.StakeInfo) error {
@@ -282,7 +306,7 @@ func computeStakeRewardsForEpoch(context vm_context.AccountVmContext, epoch uint
 	return nil
 }
 
-func updateStakeRewards(context vm_context.AccountVmContext) error {
+func updateStakeRewards(context vm_context.AccountVmContext, share *acceleratorShare) error {
 	lastEpoch, err := definition.GetLastEpochUpdate(context.Storage())
 	if err != nil {
 		return err
@@ -296,7 +320,7 @@ func updateStakeRewards(context vm_context.AccountVmContext) error {
 			stakeLog.Error("unknown panic", "reason", err)
 			return err
 		}
-		if err := computeStakeRewardsForEpoch(context, uint64(lastEpoch.LastEpoch)); err != nil {
+		if err := computeStakeRewardsForEpoch(context, uint64(lastEpoch.LastEpoch), share); err != nil {
 			return err
 		}
 	}

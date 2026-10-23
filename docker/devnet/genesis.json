@@ -139,6 +139,13 @@
                 "description": "Activates Dynamic Plasma",
                 "activated": true,
                 "enforcementHeight": 30
+            },
+            {
+                "id": "0000000000000000000000000000000000000000000000000000000000000003",
+                "name": "accelerator-share",
+                "description": "Mints 5% of every booked reward to Accelerator-Z",
+                "activated": true,
+                "enforcementHeight": 0
             }
         ]
     },
